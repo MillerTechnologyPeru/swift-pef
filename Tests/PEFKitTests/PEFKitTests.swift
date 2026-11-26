@@ -53,3 +53,73 @@ import Testing
         #expect(hash >> 16 == 6)
     }
 }
+
+@Suite struct LoaderSectionTests {
+    private func be32(_ v: UInt32) -> [UInt8] {
+        [UInt8(v >> 24), UInt8((v >> 16) & 0xFF), UInt8((v >> 8) & 0xFF), UInt8(v & 0xFF)]
+    }
+
+    /// One library (`StdCLib`), one imported symbol (`printf`), one reloc section, one export (`main`).
+    private func makeLoader() -> [UInt8] {
+        let strings = Array("StdCLib\0printf\0main".utf8)
+        let mainHash = Array("main".utf8).withUnsafeBufferPointer { CFMHash.computeHashWord($0) }
+
+        var b: [UInt8] = []
+        // Info header (56 bytes)
+        for w: UInt32 in [0xFFFF_FFFF, 0, 0xFFFF_FFFF, 0, 0xFFFF_FFFF, 0,
+                          1, 1, 1, 96, 100, 120, 0, 1] { b += be32(w) }
+        // Library (24 bytes): name offset 0, 1 symbol starting at index 0
+        b += be32(0) + be32(0) + be32(0) + be32(1) + be32(0) + [0, 0, 0, 0]
+        // Imported symbol: TVector class, name offset 8
+        b += be32((2 << 24) | 8)
+        // Reloc header: section 1, 1 instruction at offset 0
+        b += [0, 1, 0, 0] + be32(1) + be32(0)
+        // Relocation instructions (2 bytes) + padding to strings at 100
+        b += [0x00, 0x00, 0, 0]
+        b += strings
+        while b.count < 120 { b.append(0) }
+        // Hash table: 1 slot holding 1 chain entry starting at index 0
+        b += be32(1 << 18)
+        b += be32(mainHash)
+        b += be32((2 << 24) | 15) + be32(0x10) + [0, 0]
+        return b
+    }
+
+    @Test func parsesTables() throws {
+        let bytes = makeLoader()
+        try bytes.withUnsafeBytes { raw in
+            let loader = try PEFLoaderSection.parse(loaderBytes: raw)
+            #expect(loader.info.importedLibraryCount == 1)
+
+            let lib = try loader.importedLibrary(at: 0)
+            #expect(Array(try #require(loader.name(atOffset: lib.nameOffset))) == Array("StdCLib".utf8))
+
+            let sym = try loader.importedSymbol(at: 0)
+            #expect(sym.symbolClass == .tVector)
+            #expect(Array(try #require(loader.name(atOffset: sym.nameOffset))) == Array("printf".utf8))
+
+            let header = try loader.relocationHeader(at: 0)
+            #expect(header.sectionIndex == 1)
+            #expect(try loader.relocationInstructions(for: header).count == 2)
+        }
+    }
+
+    @Test func findsExportByName() throws {
+        let bytes = makeLoader()
+        try bytes.withUnsafeBytes { raw in
+            let loader = try PEFLoaderSection.parse(loaderBytes: raw)
+            let found = Array("main".utf8).withUnsafeBufferPointer { loader.findExport(named: $0) }
+            #expect(found?.symbolOffset == 0x10)
+            let missing = Array("nope".utf8).withUnsafeBufferPointer { loader.findExport(named: $0) }
+            #expect(missing == nil)
+        }
+    }
+
+    @Test func rejectsTruncatedTables() {
+        var bytes = makeLoader()
+        bytes.removeLast(30)
+        bytes.withUnsafeBytes { raw in
+            #expect(throws: PEFError.self) { try PEFLoaderSection.parse(loaderBytes: raw) }
+        }
+    }
+}

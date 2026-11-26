@@ -1,11 +1,9 @@
-// swift-tools-version: 6.0
+// swift-tools-version: 6.4
 import PackageDescription
 
-let embeddedSwiftSettings: [SwiftSetting] = [
-    // Embedded Swift only applies on the Linux ppc32 target; Darwin hosts build PEFKit normally.
-    .enableExperimentalFeature("Embedded", .when(platforms: [.linux])),
-    .unsafeFlags(["-wmo", "-Xfrontend", "-disable-stack-protector"], .when(platforms: [.linux]))
-]
+// PEFKit is not built with Embedded Swift for now. It stays Foundation-free (it imports only
+// BinaryParsing and the standard library) so Embedded can be re-enabled on it later by adding
+// `.enableExperimentalFeature("Embedded")` and depending on `BinaryParsingEmbedded`.
 
 let package = Package(
     name: "swift-pef",
@@ -21,7 +19,8 @@ let package = Package(
         )
     ],
     dependencies: [
-        .package(url: "https://github.com/PureSwift/Graphite.git", branch: "master")
+        .package(url: "https://github.com/PureSwift/Graphite.git", branch: "master"),
+        .package(url: "https://github.com/apple/swift-binary-parsing.git", .upToNextMinor(from: "0.0.4"))
     ],
     targets: [
         .target(
@@ -37,7 +36,9 @@ let package = Package(
         ),
         .target(
             name: "PEFKit",
-            swiftSettings: embeddedSwiftSettings
+            dependencies: [
+                .product(name: "BinaryParsing", package: "swift-binary-parsing")
+            ]
         ),
         .executableTarget(
             name: "BlueBox",
@@ -50,7 +51,10 @@ let package = Package(
         ),
         .testTarget(
             name: "PEFKitTests",
-            dependencies: ["PEFKit"]
+            dependencies: [
+                "PEFKit",
+                .product(name: "BinaryParsing", package: "swift-binary-parsing")
+            ]
         ),
         .testTarget(
             name: "BlueBoxTests",

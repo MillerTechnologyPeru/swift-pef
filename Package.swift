@@ -7,11 +7,15 @@ import PackageDescription
 
 let package = Package(
     name: "swift-pef",
-    platforms: [.macOS(.v15)],
+    platforms: [.macOS(.v26)],
     products: [
         .library(
             name: "PEFKit",
             targets: ["PEFKit"]
+        ),
+        .library(
+            name: "PPC32Core",
+            targets: ["PPC32Core"]
         ),
         .executable(
             name: "bluebox",
@@ -40,6 +44,10 @@ let package = Package(
                 .product(name: "BinaryParsing", package: "swift-binary-parsing")
             ]
         ),
+        // Clean-room user-mode PowerPC 32-bit interpreter. Standard library only (no Foundation).
+        .target(
+            name: "PPC32Core"
+        ),
         .executableTarget(
             name: "BlueBox",
             dependencies: [
@@ -55,6 +63,10 @@ let package = Package(
                 "PEFKit",
                 .product(name: "BinaryParsing", package: "swift-binary-parsing")
             ]
+        ),
+        .testTarget(
+            name: "PPC32CoreTests",
+            dependencies: ["PPC32Core"]
         ),
         .testTarget(
             name: "BlueBoxTests",

@@ -1,15 +1,20 @@
+import BinaryParsing
 import Testing
 @testable import PEFKit
 
 @Suite struct PatternDecoderTests {
     private func unpack(_ bytes: [UInt8], capacity: Int = 64) throws -> [UInt8] {
         var out = [UInt8](repeating: 0xFF, count: capacity)
-        let written = try bytes.withUnsafeBytes { src in
-            try out.withUnsafeMutableBytes { dst in
-                try PEFPatternDecoder.unpack(src, into: dst)
+        let written = try out.withUnsafeMutableBytes { dst in
+            try bytes.withParserSpan { (span) throws(PEFError) in
+                try PEFPatternDecoder.unpack(&span, into: dst)
             }
         }
         return Array(out[0..<written])
+    }
+
+    @Test func outputTooSmall() {
+        #expect(throws: PEFError.self) { try unpack([0x05], capacity: 4) }
     }
 
     @Test func zeroFill() throws {
@@ -89,18 +94,29 @@ import Testing
         let bytes = makeLoader()
         try bytes.withUnsafeBytes { raw in
             let loader = try PEFLoaderSection.parse(loaderBytes: raw)
-            #expect(loader.info.importedLibraryCount == 1)
+            // `loader` is noncopyable, so compute values first: `#expect` captures its operands.
+            let libraryCount = loader.info.importedLibraryCount
+            #expect(libraryCount == 1)
 
             let lib = try loader.importedLibrary(at: 0)
-            #expect(Array(try #require(loader.name(atOffset: lib.nameOffset))) == Array("StdCLib".utf8))
+            guard let libName = loader.name(atOffset: lib.nameOffset) else {
+                Issue.record("missing library name")
+                return
+            }
+            #expect(Array(libName) == Array("StdCLib".utf8))
 
             let sym = try loader.importedSymbol(at: 0)
             #expect(sym.symbolClass == .tVector)
-            #expect(Array(try #require(loader.name(atOffset: sym.nameOffset))) == Array("printf".utf8))
+            guard let symName = loader.name(atOffset: sym.nameOffset) else {
+                Issue.record("missing symbol name")
+                return
+            }
+            #expect(Array(symName) == Array("printf".utf8))
 
             let header = try loader.relocationHeader(at: 0)
             #expect(header.sectionIndex == 1)
-            #expect(try loader.relocationInstructions(for: header).count == 2)
+            let instructionBytes = try loader.relocationInstructions(for: header).count
+            #expect(instructionBytes == 2)
         }
     }
 
@@ -119,7 +135,74 @@ import Testing
         var bytes = makeLoader()
         bytes.removeLast(30)
         bytes.withUnsafeBytes { raw in
-            #expect(throws: PEFError.self) { try PEFLoaderSection.parse(loaderBytes: raw) }
+            #expect(throws: PEFError.self) { _ = try PEFLoaderSection.parse(loaderBytes: raw) }
+        }
+    }
+}
+
+@Suite struct ContainerTests {
+    private func be32(_ v: UInt32) -> [UInt8] {
+        [UInt8(v >> 24), UInt8((v >> 16) & 0xFF), UInt8((v >> 8) & 0xFF), UInt8(v & 0xFF)]
+    }
+
+    /// 'Joy!peffpwpc', version 1, one section whose 8 bytes sit at offset 68.
+    private func makeContainer(kind: UInt8 = 0, architecture: UInt32 = 0x70777063) -> [UInt8] {
+        var b: [UInt8] = []
+        b += be32(0x4A6F7921) + be32(0x70656666) + be32(architecture) + be32(1)
+        b += be32(0) + be32(0) + be32(0) + be32(0)
+        b += [0, 1, 0, 1] + be32(0)
+        // Section header (28 bytes)
+        b += be32(0xFFFF_FFFF) + be32(0) + be32(8) + be32(8) + be32(8) + be32(68)
+        b += [kind, 4, 4, 0]
+        b += [UInt8](repeating: 0xAA, count: 8)
+        return b
+    }
+
+    @Test func parsesHeaderAndSection() throws {
+        try makeContainer().withParserSpan { (span) throws(PEFError) in
+            let header = try PEFContainerHeader(parsing: &span)
+            #expect(header.sectionCount == 1)
+            #expect(header.instSectionCount == 1)
+            #expect(span.startPosition == PEFContainerHeader.byteSize)
+        }
+        try makeContainer().withParserSpan { (span) throws(PEFError) in
+            let section = try PEFSectionHeader.parse(container: span, index: 0)
+            #expect(section.kind == .code)
+            #expect(section.containerOffset == 68)
+            #expect(section.containerLength == 8)
+            #expect(section.alignment == 4)
+        }
+    }
+
+    @Test func rejectsBadMagicArchitectureAndTruncation() {
+        var bad = makeContainer()
+        bad[0] = 0
+        #expect(throws: PEFError.self) {
+            try bad.withParserSpan { (span) throws(PEFError) in _ = try PEFContainerHeader(parsing: &span) }
+        }
+        #expect(throws: PEFError.self) {
+            try makeContainer(architecture: 0x6D36386B).withParserSpan { (span) throws(PEFError) in
+                _ = try PEFContainerHeader(parsing: &span)
+            }
+        }
+        #expect(throws: PEFError.self) {
+            try Array(makeContainer().prefix(20)).withParserSpan { (span) throws(PEFError) in
+                _ = try PEFContainerHeader(parsing: &span)
+            }
+        }
+    }
+
+    @Test func rejectsSectionOutsideContainerAndBadKind() {
+        let short = Array(makeContainer().dropLast(4))
+        #expect(throws: PEFError.self) {
+            try short.withParserSpan { (span) throws(PEFError) in
+                _ = try PEFSectionHeader.parse(container: span, index: 0)
+            }
+        }
+        #expect(throws: PEFError.self) {
+            try makeContainer(kind: 99).withParserSpan { (span) throws(PEFError) in
+                _ = try PEFSectionHeader.parse(container: span, index: 0)
+            }
         }
     }
 }

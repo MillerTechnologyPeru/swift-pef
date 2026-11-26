@@ -1,3 +1,5 @@
+import BinaryParsing
+
 public struct PEFSectionHeader: Sendable {
     public static let byteSize = 28
 
@@ -11,34 +13,42 @@ public struct PEFSectionHeader: Sendable {
     public let shareKind: UInt8
     public let alignment: UInt8
 
-    /// Parses the section header at `index` in the table that follows the 40-byte container header.
+    /// Parses one 28-byte section header.
+    public init(parsing input: inout ParserSpan) throws(PEFError) {
+        nameOffset = try input.readInt32()
+        defaultAddress = try input.readUInt32()
+        totalLength = try input.readUInt32()
+        unpackedLength = try input.readUInt32()
+        containerLength = try input.readUInt32()
+        containerOffset = try input.readUInt32()
+
+        let rawKind = try input.readUInt8()
+        guard let kind = PEFSectionKind(rawValue: rawKind) else { throw .invalidSectionKind(rawKind) }
+        self.kind = kind
+        shareKind = try input.readUInt8()
+        alignment = try input.readUInt8()
+        _ = try input.readUInt8() // reservedA
+    }
+
+    /// Parses the section header at `index` in the table that follows the 40-byte container
+    /// header, and checks that the section's bytes lie within the container.
+    ///
+    /// - Parameter container: a span over the whole container, offsets measured from the start.
     public static func parse(
-        from buffer: UnsafeRawBufferPointer,
+        container: borrowing ParserSpan,
         index: Int
     ) throws(PEFError) -> PEFSectionHeader {
-        let offset = 40 + index * byteSize
-        guard offset + byteSize <= buffer.count else { throw .truncatedSection(index: index) }
-
-        let rawKind = buffer[offset + 24]
-        guard let kind = PEFSectionKind(rawValue: rawKind) else {
+        var table: ParserSpan
+        do throws(ParsingError) {
+            let offset = PEFContainerHeader.byteSize + index * byteSize
+            table = try container.seeking(toAbsoluteOffset: offset)
+        } catch {
             throw .truncatedSection(index: index)
         }
 
-        let header = PEFSectionHeader(
-            nameOffset: Int32(bitPattern: buffer.loadBigEndianUInt32(at: offset)),
-            defaultAddress: buffer.loadBigEndianUInt32(at: offset + 4),
-            totalLength: buffer.loadBigEndianUInt32(at: offset + 8),
-            unpackedLength: buffer.loadBigEndianUInt32(at: offset + 12),
-            containerLength: buffer.loadBigEndianUInt32(at: offset + 16),
-            containerOffset: buffer.loadBigEndianUInt32(at: offset + 20),
-            kind: kind,
-            shareKind: buffer[offset + 25],
-            alignment: buffer[offset + 26]
-        )
-
-        // The section's bytes in the container must lie within the file.
-        let end = Int(header.containerOffset) + Int(header.containerLength)
-        guard end <= buffer.count else { throw .truncatedSection(index: index) }
+        let header = try PEFSectionHeader(parsing: &table)
+        let end = UInt64(header.containerOffset) + UInt64(header.containerLength)
+        guard end <= UInt64(container.endPosition) else { throw .truncatedSection(index: index) }
         return header
     }
 }

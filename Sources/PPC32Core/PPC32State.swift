@@ -20,8 +20,9 @@ public enum PPC32StepResult: UInt8, Sendable {
 public struct PPC32State: ~Copyable {
     /// Guest addresses at or above this value are synthetic CFM import trap vectors.
     public static let importTrapBase: UInt32 = 0xF000_0000
-    /// Return address that makes `step()` report `.returnToHost`.
-    public static let returnSentinel: UInt32 = 0xFFFF_FFFE
+    /// Return address that makes `step()` report `.returnToHost`. Its low two bits are clear so
+    /// that it survives `bclr`/`bcctr`, which architecturally clear the low two bits of the target.
+    public static let returnSentinel: UInt32 = 0xFFFF_FFFC
 
     public var gpr: InlineArray<32, UInt32>
     public var fpr: InlineArray<32, Double>

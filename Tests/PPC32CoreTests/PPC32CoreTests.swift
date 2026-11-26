@@ -85,8 +85,8 @@ let entry: UInt32 = 0x1000
 func run(
     _ program: [UInt32],
     maxInstructions: Int = 10_000,
-    memorySetup: (UnsafeMutableRawPointer) -> Void = { _ in },
-    setup: (inout PPC32State) -> Void = { _ in }
+    setup: (inout PPC32State) -> Void = { _ in },
+    memorySetup: (UnsafeMutableRawPointer) -> Void = { _ in }
 ) -> Snapshot {
     let size = 0x10000
     let memory = UnsafeMutableRawPointer.allocate(byteCount: size, alignment: 16)
@@ -157,7 +157,8 @@ func run(
         ])
         #expect(s.gpr[4] == 0)
         #expect(s.gpr[5] == 1)
-        #expect(s.xer & 0x2000_0000 != 0)
+        // addze always writes CA: 0 + CA carried nothing out, so it is cleared.
+        #expect(s.xer & 0x2000_0000 == 0)
     }
 
     @Test func shiftRightAlgebraicSetsCarry() {

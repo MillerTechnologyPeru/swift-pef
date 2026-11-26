@@ -1,10 +1,16 @@
+import BinaryParsing
+
 public enum PEFError: Error, Sendable {
+    /// A low-level read failed (for example, not enough bytes or an out-of-range seek).
+    case parsing(ParsingError)
     case invalidMagic
     case unsupportedArchitecture(UInt32)
     case unsupportedFormatVersion(UInt32)
     case truncatedHeader
     case truncatedSection(index: Int)
+    case invalidSectionKind(UInt8)
     case invalidPatternOpcode(UInt8)
+    case outputBufferTooSmall
     case relocationOutOfBounds(offset: Int)
     case unresolvedSymbol(hash: UInt32)
     case malformedLoaderSection
@@ -23,6 +29,7 @@ public enum PEFSectionKind: UInt8, Sendable {
 }
 
 public struct PEFContainerHeader: Sendable {
+    public static let byteSize = 40
     public static let tag1Magic: UInt32 = 0x4A6F7921 // 'Joy!'
     public static let tag2Magic: UInt32 = 0x70656666 // 'peff'
     public static let archPowerPC: UInt32 = 0x70777063 // 'pwpc'
@@ -39,48 +46,25 @@ public struct PEFContainerHeader: Sendable {
     public let instSectionCount: UInt16
     public let reservedA: UInt32
 
-    public static func parse(from buffer: UnsafeRawBufferPointer) throws(PEFError) -> PEFContainerHeader {
-        guard buffer.count >= 40 else { throw .truncatedHeader }
-        let tag1 = buffer.loadBigEndianUInt32(at: 0)
-        let tag2 = buffer.loadBigEndianUInt32(at: 4)
-        guard tag1 == tag1Magic, tag2 == tag2Magic else { throw .invalidMagic }
+    /// Parses the 40-byte header at the start of a PEF container, validating magic,
+    /// architecture, and format version.
+    public init(parsing input: inout ParserSpan) throws(PEFError) {
+        tag1 = try input.readUInt32()
+        tag2 = try input.readUInt32()
+        guard tag1 == Self.tag1Magic, tag2 == Self.tag2Magic else { throw .invalidMagic }
 
-        let arch = buffer.loadBigEndianUInt32(at: 8)
-        guard arch == archPowerPC else { throw .unsupportedArchitecture(arch) }
+        architecture = try input.readUInt32()
+        guard architecture == Self.archPowerPC else { throw .unsupportedArchitecture(architecture) }
 
-        let version = buffer.loadBigEndianUInt32(at: 12)
-        guard version == 1 else { throw .unsupportedFormatVersion(version) }
+        formatVersion = try input.readUInt32()
+        guard formatVersion == 1 else { throw .unsupportedFormatVersion(formatVersion) }
 
-        return PEFContainerHeader(
-            tag1: tag1,
-            tag2: tag2,
-            architecture: arch,
-            formatVersion: version,
-            dateTimeStamp: buffer.loadBigEndianUInt32(at: 16),
-            oldDefVersion: buffer.loadBigEndianUInt32(at: 20),
-            oldImpVersion: buffer.loadBigEndianUInt32(at: 24),
-            currentVersion: buffer.loadBigEndianUInt32(at: 28),
-            sectionCount: buffer.loadBigEndianUInt16(at: 32),
-            instSectionCount: buffer.loadBigEndianUInt16(at: 34),
-            reservedA: buffer.loadBigEndianUInt32(at: 36)
-        )
-    }
-}
-
-extension UnsafeRawBufferPointer {
-    @inlinable
-    func loadBigEndianUInt16(at offset: Int) -> UInt16 {
-        let b0 = UInt16(self[offset])
-        let b1 = UInt16(self[offset + 1])
-        return (b0 << 8) | b1
-    }
-
-    @inlinable
-    func loadBigEndianUInt32(at offset: Int) -> UInt32 {
-        let b0 = UInt32(self[offset])
-        let b1 = UInt32(self[offset + 1])
-        let b2 = UInt32(self[offset + 2])
-        let b3 = UInt32(self[offset + 3])
-        return (b0 << 24) | (b1 << 16) | (b2 << 8) | b3
+        dateTimeStamp = try input.readUInt32()
+        oldDefVersion = try input.readUInt32()
+        oldImpVersion = try input.readUInt32()
+        currentVersion = try input.readUInt32()
+        sectionCount = try input.readUInt16()
+        instSectionCount = try input.readUInt16()
+        reservedA = try input.readUInt32()
     }
 }

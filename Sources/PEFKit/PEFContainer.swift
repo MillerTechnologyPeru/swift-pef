@@ -7,6 +7,7 @@ public enum PEFError: Error, Sendable {
     case invalidPatternOpcode(UInt8)
     case relocationOutOfBounds(offset: Int)
     case unresolvedSymbol(hash: UInt32)
+    case malformedLoaderSection
 }
 
 public enum PEFSectionKind: UInt8, Sendable {

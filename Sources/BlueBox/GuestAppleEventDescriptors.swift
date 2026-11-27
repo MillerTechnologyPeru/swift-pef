@@ -78,4 +78,25 @@ struct GuestAppleEventDescriptors {
             values.removeValue(forKey: handle)
         }
     }
+
+    /// Replace structured contents while preserving the guest record and master pointer.
+    mutating func update(_ value: Descriptor, at address: UInt32, heap: inout GuestHeap,
+                         read: (UInt32, Int) -> [UInt8]?) throws {
+        let existing = try load(at: address, heap: &heap, read: read)
+        guard existing.type == value.type, value.isList || value.isRecord else { throw MacError.wrongDataType }
+        // Bound host-side trees as well as the guest heap. Copies can otherwise nest indefinitely.
+        var remaining = 4096
+        var remainingBytes = Int(GuestHeap.byteCount)
+        func validate(_ descriptor: Descriptor, depth: Int) throws {
+            guard depth <= 32, remaining > 0, descriptor.bytes.count <= remainingBytes else { throw MacError(-108) }
+            remaining -= 1
+            remainingBytes -= descriptor.bytes.count
+            for item in descriptor.items { try validate(item.descriptor, depth: depth + 1) }
+            for item in descriptor.attributes { try validate(item.descriptor, depth: depth + 1) }
+        }
+        try validate(value, depth: 0)
+        let record = try Self.read(address, count: 8, using: read)
+        let handle = Self.word(record, 4)
+        values[handle] = Value(descriptor: value, generation: heap.handleGeneration(handle))
+    }
 }

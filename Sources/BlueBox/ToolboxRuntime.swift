@@ -66,6 +66,7 @@ struct ToolboxRuntime {
         }
         switch symbol.symbol {
         case "AECreateDesc", "AEDuplicateDesc", "AEDisposeDesc", "AEGetDescData", "AEGetDescDataSize",
+             "AECreateList", "AECountItems", "AEPutDesc", "AEPutPtr", "AEGetNthDesc", "AEDeleteItem",
              "AEGetAttributeDesc", "AEGetParamDesc", "AEGetAttributePtr", "AEGetParamPtr", "AECreateAppleEvent", "AEProcessAppleEvent",
              "GetNextEvent", "EventAvail", "WaitNextEvent":
             guard let readGuest, let writeGuest else { return false }
@@ -497,6 +498,46 @@ extension ToolboxRuntime {
             let bytes = a[2] == 0 || type == DescriptorType.null ? []
                 : try Coding.read(a[1], count: Int(a[2]), using: read)
             try appleEventDescriptors.store(Descriptor(type: type, bytes: bytes), at: a[3], heap: &heap, write: write)
+        case "AECreateList":
+            try Coding.write(a[3], bytes: Coding.word(DescriptorType.null.rawValue) + Coding.word(0), using: write)
+            guard Int32(bitPattern: a[1]) >= 0 else { throw MacError.parameter }
+            guard a[1] == 0 else { throw MacError.unimplemented } // Factored arrays require a separate bridge.
+            let value = UInt8(truncatingIfNeeded: a[2]) == 0 ? Descriptor.list() : Descriptor.record()
+            try appleEventDescriptors.store(value, at: a[3], heap: &heap, write: write)
+        case "AECountItems":
+            let value = try appleEventDescriptors.load(at: a[0], heap: &heap, read: read)
+            guard value.isList || value.isRecord else { throw MacError.wrongDataType }
+            try Coding.write(a[1], bytes: Coding.word(UInt32(value.count)), using: write)
+        case "AEPutDesc", "AEPutPtr", "AEDeleteItem":
+            var value = try appleEventDescriptors.load(at: a[0], heap: &heap, read: read)
+            guard value.isList else { throw MacError.wrongDataType }
+            let index = Int(Int32(bitPattern: a[1]))
+            if name == "AEDeleteItem" { try value.removeItem(at: index) }
+            else {
+                let item: Descriptor
+                if name == "AEPutDesc" {
+                    item = try appleEventDescriptors.load(at: a[2], heap: &heap, read: read)
+                } else {
+                    guard Int32(bitPattern: a[4]) >= 0 else { throw MacError.parameter }
+                    let type = FourCharCode(a[2])
+                    guard type != DescriptorType.list, type != DescriptorType.record,
+                          type != DescriptorType.appleEvent else { throw MacError.unimplemented }
+                    let bytes = a[4] == 0 || type == DescriptorType.null ? []
+                        : try Coding.read(a[3], count: Int(a[4]), using: read)
+                    item = Descriptor(type: type, bytes: bytes)
+                }
+                try value.put(item, at: index)
+            }
+            try appleEventDescriptors.update(value, at: a[0], heap: &heap, read: read)
+        case "AEGetNthDesc":
+            let value = try appleEventDescriptors.load(at: a[0], heap: &heap, read: read)
+            guard value.isList || value.isRecord else { throw MacError.wrongDataType }
+            let item = try value.item(at: Int(Int32(bitPattern: a[1])))
+            guard a[2] == DescriptorType.wildCard.rawValue || a[2] == item.descriptor.type.rawValue else {
+                throw MacError.coercionFailed
+            }
+            if a[3] != 0 { try Coding.write(a[3], bytes: Coding.word(item.keyword.rawValue), using: write) }
+            try appleEventDescriptors.store(item.descriptor, at: a[4], heap: &heap, write: write)
         case "AEDuplicateDesc":
             let value = try appleEventDescriptors.load(at: a[0], heap: &heap, read: read)
             try appleEventDescriptors.store(value, at: a[1], heap: &heap, write: write)

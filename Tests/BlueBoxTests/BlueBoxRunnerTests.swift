@@ -16,14 +16,16 @@ import Graphite
     /// Code + data/TOC/TVector + loader, with real section and import relocation records.
     private func executable(_ instructions: [UInt32], imported: Bool = false,
                             importedSymbol: String = "UnknownToolboxCall", importedClass: UInt32 = 2,
-                            secondaryImport: String? = nil,
+                            secondaryImport: String? = nil, additionalImports: [String] = [],
+                            callbackOffset: UInt32? = nil,
                             entryOffset: UInt32 = 0) -> [UInt8] {
         let code = instructions.flatMap(be32)
         let dataOffset = (128 + code.count + 15) / 16 * 16
         let loaderOffset = dataOffset + 256
-        let names = imported ? [importedSymbol] + (secondaryImport.map { [$0] } ?? []) : []
+        let names = imported ? [importedSymbol] + (secondaryImport.map { [$0] } ?? []) + additionalImports : []
         let relocations: [UInt16] = imported
-            ? [0x4600, 0x8003, 0x6000] + (secondaryImport == nil ? [] : [0x6001]) : [0x4600]
+            ? [0x4600, 0x8003, 0x6000] + (secondaryImport == nil ? [] : [0x6001])
+                + (names.count > 2 ? (2..<names.count).map { UInt16(0x6000 + $0) } : []) : [0x4600]
         let strings = imported ? Array(("InterfaceLib\0" + names.map { $0 + "\0" }.joined()).utf8) : []
         let relocationOffset = imported ? 92 + names.count * 4 : 68
         let stringsOffset = relocationOffset + relocations.count * 2
@@ -61,7 +63,56 @@ import Graphite
         while bytes.count < dataOffset { bytes.append(0) }
         bytes += be32(entryOffset) + be32(8) + be32(42) + be32(0)
         while bytes.count < loaderOffset { bytes.append(0) }
+        if let callbackOffset {
+            bytes.replaceSubrange(dataOffset + 48..<dataOffset + 56,
+                                  with: be32(0x01000000 + callbackOffset) + be32(0))
+        }
         return bytes + loader
+    }
+
+    @Test func guestReceivesLaunchEventAndCallsToolboxFromItsHandler() throws {
+        func invoke(_ offset: UInt32) -> [UInt32] {
+            [0x81820000 | offset, 0x800C0000, 0x804C0004, 0x7C0903A6, 0x4E800421]
+        }
+        var code: [UInt32] = [0x7FC802A6, 0x7C5F1378, // preserve main LR/TOC
+            0x9042002C, // callback TVector TOC = this fragment's TOC
+            0x3C606165, 0x60637674, 0x3C806F61, 0x60847070,
+            0x38A20028, 0x38C0FFCE, 0x38E00000]
+        code += invoke(4) // AEInstallEventHandler
+        code += [0x7FE2FB78, 0x38600400, 0x38820040]
+        code += invoke(8) // GetNextEvent
+        code += [0x7FE2FB78, 0x38620040]
+        code += invoke(12) // AEProcessAppleEvent
+        code += [0x7FE2FB78, 0x7FC803A6, 0x4E800020]
+        let callbackOffset = UInt32(code.count * 4)
+        code += [0x7FA802A6, 0x7CBB2B78, // save handler LR and refcon
+                 0x38600400, 0x38820050]
+        code += invoke(8) // nested Toolbox call; the launch event has already been consumed
+        code += [0x7F63DB78, 0x7FA803A6, 0x4E800020] // return the negative refcon as OSErr
+        let bytes = executable(code, imported: true, importedSymbol: "AEInstallEventHandler",
+                               secondaryImport: "GetNextEvent", additionalImports: ["AEProcessAppleEvent"],
+                               callbackOffset: callbackOffset)
+        let report = try bytes.withUnsafeBytes { try BlueBoxRunner.run(bytes: $0) }
+        #expect(report.execution.stop == .returned)
+        #expect(Int32(bitPattern: report.execution.r3) == -50)
+        #expect(report.handledImportCount == 4)
+        #expect(report.execution.toc == report.toc)
+        #expect(report.execution.stackPointer == report.initialStackPointer)
+        let limited = try bytes.withUnsafeBytes { try BlueBoxRunner.run(bytes: $0, maxInstructions: 35) }
+        #expect(limited.execution.stop == .instructionLimit)
+        #expect(limited.execution.instructions <= 35)
+        var looping = bytes
+        let handlerStart = 128 + Int(callbackOffset)
+        looping.replaceSubrange(handlerStart..<handlerStart + 4, with: be32(0x48000000))
+        let loopReport = try looping.withUnsafeBytes { try BlueBoxRunner.run(bytes: $0, maxInstructions: 100) }
+        #expect(loopReport.execution.stop == .instructionLimit)
+        #expect(loopReport.execution.pc == 0x01000000 + callbackOffset)
+        #expect(loopReport.execution.instructions <= 100)
+        var faulting = bytes
+        faulting.replaceSubrange(handlerStart..<handlerStart + 4, with: be32(0))
+        let faultReport = try faulting.withUnsafeBytes { try BlueBoxRunner.run(bytes: $0) }
+        #expect(faultReport.execution.stop == .illegalInstruction(0))
+        #expect(faultReport.execution.pc == 0x01000000 + callbackOffset)
     }
 
     @Test func loadsTVectorTOCAndStackAndReturns() throws {

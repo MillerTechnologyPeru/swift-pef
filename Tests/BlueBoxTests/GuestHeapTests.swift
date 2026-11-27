@@ -115,4 +115,13 @@ import Testing
         #expect(heap.availableMasterPointers == 63)
         #expect(heap.handleSize(handles[0]) == 0)
     }
+
+    @Test func failedResourcePayloadWriteRollsBackDataAndRecyclesMaster() {
+        var heap = GuestHeap(capacity: 512)
+        let handle = heap.loadedHandle(bytes: [1, 2, 3], write: { _, bytes in bytes.count != 3 })
+        #expect(handle == 0)
+        #expect(heap.freeBytes == 256)
+        #expect(heap.availableMasterPointers == 64)
+        #expect(heap.memoryFault == ToolboxMemoryFault(address: GuestHeap.address + 256, write: true))
+    }
 }

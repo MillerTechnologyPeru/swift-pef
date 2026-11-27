@@ -69,8 +69,12 @@ struct ToolboxRuntime {
             return false
         }
         switch symbol.symbol {
-        case "FSpOpenDF", "FSpOpenRF", "FSClose", "FSRead", "GetEOF", "GetFPos", "SetFPos", "FSMakeFSSpec":
+        case "FSpOpenDF", "FSpOpenRF", "FSClose", "FSRead", "GetEOF", "GetFPos", "SetFPos", "FSMakeFSSpec", "PBReadSync", "PBRead":
             guard let readGuest, let writeGuest else { return false }
+            if symbol.symbol == "PBRead" {
+                let async = withUnsafeBytes(of: frame.gpr) { $0.bindMemory(to: UInt32.self)[1] }
+                guard UInt8(truncatingIfNeeded: async) == 0 else { return false }
+            }
             do {
                 try dispatchFileManager(symbol.symbol, frame: &frame, read: readGuest, write: writeGuest)
             } catch let fault as ToolboxMemoryFault {
@@ -659,6 +663,21 @@ extension ToolboxRuntime {
         let reference = Int16(truncatingIfNeeded: a[0])
         frame.returnGPR = 0
         switch name {
+        case "PBReadSync", "PBRead":
+            let block = try GuestIOParameterBlock(at: a[0], read: read)
+            do {
+                guard block.positionMode <= 3 else { throw MacError.unimplemented }
+                let eof = try fileManager.readPositioned(block.reference, count: block.requestedCount,
+                    mode: block.positionMode, offset: block.positionOffset, output: { bytes, position in
+                        if !bytes.isEmpty { try Coding.write(block.buffer, bytes: bytes, using: write) }
+                        try block.finish(error: bytes.count < Int(block.requestedCount) ? .endOfFile : nil,
+                                         actualCount: bytes.count, position: position, write: write)
+                    })
+                if eof { frame.returnGPR = UInt32(bitPattern: MacError.endOfFile.code) }
+            } catch let error as MacError {
+                try block.finish(error: error, write: write)
+                throw error
+            }
         case "FSpOpenDF", "FSpOpenRF":
             let spec = try GuestFileManager.spec(Coding.read(a[0], count: 70, using: read))
             let reference = try fileManager.open(spec, permission: Int8(truncatingIfNeeded: a[1]), resource: name == "FSpOpenRF")

@@ -52,7 +52,7 @@ Reference specifications:
 Validation includes synthetic format fixtures, native macOS xattr tests, and 30 local real-file
 cases: preparation/export lookup/entry-vector relocation for 15 PowerPC PEF payloads and resource
 parsing for their 15 AppleDouble sidecars. Payloads include MacGzip 1.1.3, MacZip 1.06, BBEdit Lite's
-Classic and Carbon variants, and eleven BBEdit plug-ins. The full suite passes 214 cases.
+Classic and Carbon variants, and eleven BBEdit plug-ins. The full suite passes 219 cases.
 Real-file tests use placeholder import addresses and never execute guest code. They use
 `.build/fixtures` by default, allow `PEF_FIXTURES_DIR` to override the directory, and are disabled
 when `manifest.json` is absent. Download provenance and hashes remain in the local manifest.
@@ -162,7 +162,8 @@ call from the handler, negative OSErr, looping/faulting callbacks, descriptor ow
 conversion, rollback, missing attributes, and invalid guest reads. Validation used Graphite
 master at 7ab800a. MacGzip still reaches its compatibility alert at 1,513 instructions/19 imports;
 MacZip stops at InitMenus (90 instructions), and BBEdit Lite passes AECreateList and
-NewRoutineDescriptor before stopping at FSpOpenDF (887 instructions, nine serviced imports).
+NewRoutineDescriptor before calling FSpOpenDF with a null FSSpec pointer, which stops with
+a guest memory read fault (887 instructions, nine serviced imports).
 AECreateList creates unfactored lists and empty records. AEPutDesc/AEPutPtr, AECountItems,
 AEGetNthDesc, and AEDeleteItem bridge list operations through Graphite with signed one-based
 indices and index-zero append. Updates preserve guest handle identity; retrieved/duplicated
@@ -181,6 +182,18 @@ allocation/disposal, stale ownership, invalid formats, and interpreted launch ca
 both pointer forms. Relative/unprepared records, multiple routine records, selector dispatch,
 68k execution, NewFatRoutineDescriptor and CallUniversalProc remain pending. The layout follows
 Apple's [Mixed Mode Manager summary](https://leopard-adc.pepas.com/documentation/mac/PPCSoftware/PPCSoftware-39.html).
+The initial File Manager mounts immutable file snapshots in a single root directory: volume
+-100 (or default 0), directory ID 2 (or default 0). The CLI registers the loaded application's
+logical forks using its input basename. Guest FSSpec names are catalog keys, never host paths.
+FSMakeFSSpec, FSpOpenDF/FSpOpenRF, FSRead, FSClose, GetEOF/GetFPos and SetFPos support packed
+guest records, read/current permissions, and independent marks for up to 256 open forks.
+Reads report actual counts and eofErr for partial transfers; output faults leave the mark
+unchanged, and failed reference output closes the newly opened fork. Tests cover packed
+records, independent forks, seek modes, errors, reference reuse, guest endian output, and
+an interpreted PEF that opens, reads and closes a mounted fixture. FileSpec and ForkPosition
+use Graphite's types. Directory/catalog traversal, writes, parameter-block calls and general
+host filesystem mounting remain pending. BBEdit's null spec requires startup/caller tracing.
+The interfaces follow Apple's [Introduction to File Management](https://dev.os9.ca/techpubs/mac/pdf/Files/Intro_to_Files.pdf).
 The record layout and event interfaces follow Apple's
 [Introduction to Apple Events](https://developer.apple.com/library/archive/documentation/mac/pdf/Interapplication_Communication/Intro_to_Apple_Events.pdf)
 and [Responding to Apple Events](https://dev.os9.ca/techpubs/mac/pdf/Interapplication_Communication/Responding_to_AEs.pdf).

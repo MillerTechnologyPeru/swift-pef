@@ -20,6 +20,7 @@ struct ToolboxRuntime {
     private(set) var textEditScrapLength: UInt32?
     private(set) var dialogs: DialogManagerState?
     private(set) var heap = GuestHeap()
+    private let gestalt = GuestGestalt.makeTable()
 
     /// Low-level event kinds in chronological order; host input delivery is still pending.
     var pendingEventKinds: [UInt16] = []
@@ -45,6 +46,24 @@ struct ToolboxRuntime {
             return false
         }
         switch symbol.symbol {
+        case "Gestalt":
+            let arguments = withUnsafeBytes(of: frame.gpr) { bytes in
+                let registers = bytes.bindMemory(to: UInt32.self)
+                return (FourCharCode(rawValue: registers[0]), registers[1])
+            }
+            do {
+                let response = try gestalt.response(for: arguments.0)
+                guard let writeGuest else { return false }
+                var writer = BigEndianWriter(capacity: 4)
+                writer.write(response)
+                guard writeGuest(arguments.1, writer.bytes) else {
+                    guestMemoryFault = ToolboxMemoryFault(address: arguments.1, write: true)
+                    return false
+                }
+                frame.returnGPR = 0
+            } catch {
+                frame.returnGPR = UInt32(bitPattern: error.code)
+            }
         case "MaxApplZone":
             heap.maximizeApplicationZone()
         case "MoreMasters":

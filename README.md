@@ -73,8 +73,13 @@ remain pending. Use `--framebuffer output.ppm` to save the headless screen.
 MacGzip displays “Sorry, System 7 required” and `gestaltUndefSelectorErr` after 1,513 instructions.
 This is an error-alert path, not a successful launch; the `evnt` Gestalt selector remains undefined.
 `AEInstallEventHandler`, `AEGetEventHandler`, and `AERemoveEventHandler` use Graphite's
-separate application and system handler tables. Guest procedure addresses remain opaque;
-descriptor marshaling and guest callback execution are pending, so AppleEvents remain unadvertised.
+separate application and system handler tables. Flat descriptor creation, duplication, disposal,
+and data access use guest heap handles; event creation and attribute/parameter reads use Graphite.
+`GetNextEvent`, `EventAvail`, and zero-sleep `WaitNextEvent` expose one initial `oapp` event.
+`AEProcessAppleEvent` invokes its guest TVector handler with borrowed event/reply descriptors
+and the installed refcon, sharing the caller's execution budget. A synthetic PEF exercises this
+path and a Toolbox call from inside the handler. Lists, parameter mutation, sending, sleeping
+event waits, host input, and Mixed Mode UPP decoding remain pending; `evnt` stays unadvertised.
 Further Toolbox dispatch and full application startup remain pending, as do Linux/ppc32
 and Embedded Swift validation.
 

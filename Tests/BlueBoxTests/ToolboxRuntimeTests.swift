@@ -402,4 +402,55 @@ import Testing
         #expect(runtime.dialogs?.parameterText.map(\.bytes) == [[], [], [], []])
         #expect(runtime.handledImportCount == 1)
     }
+
+    @Test func gestaltWritesBigEndianGuestResponseAndReturnsNoErr() {
+        var runtime = ToolboxRuntime()
+        var frame = MORAInvocationFrame()
+        withUnsafeMutableBytes(of: &frame.gpr) { bytes in
+            let registers = bytes.bindMemory(to: UInt32.self)
+            registers[0] = 0x73797361 // sysa
+            registers[1] = 0x01000000
+        }
+        var result: [UInt8] = []
+        let handled = runtime.dispatch(symbol("Gestalt"), frame: &frame, writeGuest: { address, bytes in
+            #expect(address == 0x01000000)
+            result = bytes
+            return true
+        })
+        #expect(handled)
+        #expect(frame.returnGPR == 0)
+        #expect(result == [0, 0, 0, 2])
+    }
+
+    @Test func unknownGestaltSelectorLeavesResponseUntouched() {
+        var runtime = ToolboxRuntime()
+        var frame = MORAInvocationFrame()
+        withUnsafeMutableBytes(of: &frame.gpr) { $0.bindMemory(to: UInt32.self)[0] = 0x7174696D } // qtim
+        var wrote = false
+        #expect(runtime.dispatch(symbol("Gestalt"), frame: &frame, writeGuest: { _, _ in wrote = true; return true }))
+        #expect(!wrote)
+        #expect(Int32(bitPattern: frame.returnGPR) == -5551)
+        #expect(runtime.guestMemoryFault == nil)
+    }
+
+    @Test func gestaltRejectsInvalidResponseDestination() {
+        var runtime = ToolboxRuntime()
+        var frame = MORAInvocationFrame()
+        withUnsafeMutableBytes(of: &frame.gpr) { $0.bindMemory(to: UInt32.self)[0] = 0x73797361 }
+        #expect(!runtime.dispatch(symbol("Gestalt"), frame: &frame, writeGuest: { _, _ in false }))
+        #expect(runtime.guestMemoryFault == ToolboxMemoryFault(address: 0, write: true))
+        #expect(runtime.handledImportCount == 0)
+    }
+
+    @Test func guestProfileDoesNotAdvertiseHostOSOrOptionalManagers() {
+        let table = GuestGestalt.makeTable()
+        #expect(table["sysv"] == 0x0900)
+        #expect(table["ram "] == Int32(GuestHeap.byteCount))
+        #expect(table["lram"] == Int32(GuestHeap.byteCount))
+        #expect(table["qd  "] == 0)
+        for selector: UInt32 in [0x7174696D, 0x70706366, 0x73797331, 0x63617262] { // qtim, ppcf, sys1, carb
+            // No QuickTime, processor feature bitmap, modern OS version parts, or Carbon claim.
+            #expect(table[.init(rawValue: selector)] == nil)
+        }
+    }
 }

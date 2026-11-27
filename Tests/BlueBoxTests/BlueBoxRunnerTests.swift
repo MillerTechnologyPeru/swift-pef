@@ -1,3 +1,4 @@
+#if !arch(powerpc)
 import Foundation
 import Testing
 import Graphite
@@ -609,3 +610,5 @@ import PEFKit
         #expect(report.execution.instructions == 1513)
     }
 }
+
+#endif

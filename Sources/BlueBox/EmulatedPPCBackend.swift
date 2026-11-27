@@ -6,6 +6,7 @@ enum PPCExecutionStop: Equatable {
     case returned
     case instructionLimit
     case unsupportedImport(UInt32)
+    case unsupportedRoutineDescriptor(UInt32)
     case illegalInstruction(UInt32)
     case invalidInstructionAddress
     case memoryFault(address: UInt32, write: Bool)
@@ -33,6 +34,7 @@ final class GuestInstructionBudget {
 struct GuestPPCInvocation {
     let vector: UInt32
     let arguments: [UInt32]
+    var procInfo: UInt32? = nil
 }
 
 enum EmulatedPPCBackend {
@@ -40,17 +42,23 @@ enum EmulatedPPCBackend {
         case invalidVector
         case invalidStack
         case tooManyArguments
+        case unsupportedRoutineDescriptor
     }
 
-    /// Invokes a guest TVector on a dedicated stack frame. This does not decode Mixed Mode UPPs.
+    /// Invokes a TVector or supported Mixed Mode UPP on a dedicated stack frame.
     static func callVector(
         at vector: UInt32, arguments: [UInt32], stackPointer: UInt32,
         in memory: borrowing GuestAddressSpace, maxInstructions: Int,
         memoryRegions: UnsafeBufferPointer<PPC32MemoryRegion>,
+        expectedProcInfo: UInt32? = nil,
         budget: GuestInstructionBudget? = nil,
         dispatchImport: (UInt32, inout MORAInvocationFrame) -> Bool
     ) throws(CallbackError) -> PPCExecutionReport {
         guard arguments.count <= 8 else { throw .tooManyArguments }
+        let vector = try GuestRoutineDescriptor.resolve(vector, expectedProcInfo: expectedProcInfo, read: { address, count in
+            guard memoryRegions.contains(where: { $0.contains(address, byteCount: count) }) else { return nil }
+            return Array(UnsafeRawBufferPointer(start: memory.hostPointer(for: address), count: count))
+        })
         guard vector != 0, vector & 3 == 0,
               memoryRegions.contains(where: { $0.contains(vector, byteCount: 8) }) else {
             throw .invalidVector
@@ -142,7 +150,8 @@ enum EmulatedPPCBackend {
                             let child = try callVector(at: callback.vector, arguments: callback.arguments,
                                 stackPointer: callbackStack, in: memory,
                                 maxInstructions: budget.remaining,
-                                memoryRegions: memoryRegions, budget: budget, dispatchImport: dispatchImport)
+                                memoryRegions: memoryRegions, expectedProcInfo: callback.procInfo,
+                                budget: budget, dispatchImport: dispatchImport)
                             let total = state.timeBase + child.instructions
                             completeCallback()
                             guard child.stop == .returned else {
@@ -155,6 +164,9 @@ enum EmulatedPPCBackend {
                             frame.returnGPR = UInt32(bitPattern: Int32(Int16(truncatingIfNeeded: child.r3)))
                         } catch {
                             completeCallback()
+                            if (error as? CallbackError) == .unsupportedRoutineDescriptor {
+                                return report(state, result: result, stop: .unsupportedRoutineDescriptor(callback.vector))
+                            }
                             let invalidVector = (error as? CallbackError) == .invalidVector
                             let address = invalidVector ? callback.vector : callbackStack
                             return report(state, result: result,

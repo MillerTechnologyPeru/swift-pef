@@ -78,7 +78,9 @@ and data access use guest heap handles; event creation and attribute/parameter r
 `GetNextEvent`, `EventAvail`, and zero-sleep `WaitNextEvent` expose one initial `oapp` event.
 `AEProcessAppleEvent` invokes its guest TVector handler with borrowed event/reply descriptors
 and the installed refcon, sharing the caller's execution budget. A synthetic PEF exercises this
-path and a Toolbox call from inside the handler. Lists, parameter mutation, sending, sleeping
+path and a Toolbox call from inside the handler. Unfactored lists support creation, insertion,
+replacement, counting, copied item lookup, and deletion through Graphite. Empty record creation
+is also supported. Factored arrays, keyed record/parameter mutation, sending, sleeping
 event waits, host input, and Mixed Mode UPP decoding remain pending; `evnt` stays unadvertised.
 Further Toolbox dispatch and full application startup remain pending, as do Linux/ppc32
 and Embedded Swift validation.

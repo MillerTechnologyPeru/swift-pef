@@ -280,6 +280,18 @@ import Graphite
         #expect(report.handledImportCount == 1)
     }
 
+    @Test func guestConvertsPascalStringInPlaceAndUsesReturnedPointer() throws {
+        let code: [UInt32] = [0x7FC802A6, 0x3BE20028, 0x3C80028E, 0x60844100, 0x909F0000,
+                              0x387F0000, 0x81820004, 0x800C0000, 0x804C0004, 0x7C0903A6,
+                              0x4E800421, 0x88630000, 0x7FC803A6, 0x4E800020]
+        let report = try executable(code, imported: true, importedSymbol: "p2cstr").withUnsafeBytes {
+            try BlueBoxRunner.run(bytes: $0)
+        }
+        #expect(report.execution.stop == .returned)
+        #expect(report.execution.r3 == 0x8E)
+        #expect(report.handledImportCount == 1)
+    }
+
     @Test func initGrafRejectsReadOnlyGuestDestination() throws {
         // Pass thePort=code+126, making InitGraf's first write target the code section.
         let code: [UInt32] = [0x3C600100, 0x3863007E,
@@ -329,8 +341,8 @@ import Graphite
             return
         }
         #expect(report.imports[Int(index)].library == "InterfaceLib")
-        #expect(report.imports[Int(index)].symbol == "p2cstr")
-        #expect(report.handledImportCount == 13)
-        #expect(report.execution.instructions == 202)
+        #expect(report.imports[Int(index)].symbol == "BlockMoveData")
+        #expect(report.handledImportCount == 14)
+        #expect(report.execution.instructions == 801)
     }
 }

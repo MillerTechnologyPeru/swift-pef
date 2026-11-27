@@ -56,15 +56,18 @@ The CLI attaches application resource forks from native attributes, AppleDouble 
 or MacBinary archives. `GetIndString` uses Graphite's `STR#` reader and copies a checked
 Pascal string to guest memory; `ResError` reports missing or malformed resource errors.
 Missing resources and out-of-range indexes produce empty strings. Only the application's
-read-only resource fork is connected; resource handles, file chains, and writes remain pending.
+read-only resource fork is connected; file chains and writes remain pending.
 Pascal/C string conversions support in-place and copying variants, their legacy aliases,
 overlapping buffers, and checked guest reads/writes. Conversion preserves bytes and bounds
 C-to-Pascal strings at 255 bytes.
 `BlockMove`, `BlockMoveData`, and their uncached variants copy checked guest ranges with
 overlap-safe snapshots. Zero-length copies do not access either pointer; invalid sizes,
 wrapped ranges, unmapped sources, and protected destinations stop with memory diagnostics.
-MacGzip now passes its first block copy, reaching `InterfaceLib:GetResource`
-after 1,426 instructions.
+`GetResource`, `Get1Resource`, and `GetString` load guest-heap handles with stable identity.
+`ReleaseResource` frees them, and `DetachResource` transfers ownership to the application.
+Resource file switching, attributes, purging, and writeback remain pending.
+MacGzip now reaches `InterfaceLib:StopAlert` after 1,513 instructions. This is an error-alert
+path, not a successful launch; the `evnt` Gestalt selector remains undefined.
 Further Toolbox dispatch and full application startup remain pending, as do Linux/ppc32
 and Embedded Swift validation.
 

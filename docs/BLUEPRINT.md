@@ -52,7 +52,7 @@ Reference specifications:
 Validation includes synthetic format fixtures, native macOS xattr tests, and 30 local real-file
 cases: preparation/export lookup/entry-vector relocation for 15 PowerPC PEF payloads and resource
 parsing for their 15 AppleDouble sidecars. Payloads include MacGzip 1.1.3, MacZip 1.06, BBEdit Lite's
-Classic and Carbon variants, and eleven BBEdit plug-ins. The full suite passes 198 cases.
+Classic and Carbon variants, and eleven BBEdit plug-ins. The full suite passes 199 cases.
 Real-file tests use placeholder import addresses and never execute guest code. They use
 `.build/fixtures` by default, allow `PEF_FIXTURES_DIR` to override the directory, and are disabled
 when `manifest.json` is absent. Download provenance and hashes remain in the local manifest.
@@ -144,6 +144,11 @@ writes procedure/refcon values through checked big-endian guest memory. Tests co
 isolation, signed errors, invalid outputs, wildcard lookup, and interpreted guest registration.
 Descriptor marshaling and guest callback execution remain pending; the evnt Gestalt selector
 remains undefined, and MacGzip's compatibility alert is unchanged.
+The interpreter can invoke a checked guest TVector with its TOC, up to eight integer
+arguments, a dedicated 64-byte linkage/argument area, and an instruction budget. Vector
+reads and stack writes require mapped regions; instruction fetch retains executable checks.
+Tests exercise TOC access, argument passing, return values, limits, and rejected ranges.
+This primitive is not yet wired to AppleEvent delivery or Mixed Mode UPP decoding.
 Unknown libraries, symbols, and other data imports remain explicit failures. Further Toolbox
 dispatch, complete application startup, Linux/ppc32 cross-platform tests, and Embedded
 Swift validation remain outstanding.

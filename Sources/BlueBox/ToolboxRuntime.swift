@@ -21,14 +21,18 @@ struct ToolboxRuntime {
     private(set) var dialogs: DialogManagerState?
     private(set) var heap = GuestHeap()
     private let gestalt = GuestGestalt.makeTable()
+    private let resources: ResourceFile?
+    private(set) var lastResourceError: Int32 = 0
 
     /// Low-level event kinds in chronological order; host input delivery is still pending.
     var pendingEventKinds: [UInt16] = []
 
     /// Supplied screen memory must outlive this runtime and its QuickDraw objects.
     init(screenPixels: UnsafeMutableRawPointer? = nil,
+         resources: ResourceFile? = nil,
          ticks: @escaping () -> UInt32 = { SystemClock.ticks }) {
         self.ticks = ticks
+        self.resources = resources
         let bounds = GuestQuickDrawGlobals.screenBounds
         let pixels = screenPixels.map {
             PixelBuffer(wrapping: $0, rowBytes: GuestQuickDrawGlobals.screenRowBytes,
@@ -46,6 +50,28 @@ struct ToolboxRuntime {
             return false
         }
         switch symbol.symbol {
+        case "GetIndString":
+            guard let writeGuest else { return false }
+            let arguments = withUnsafeBytes(of: frame.gpr) { bytes in
+                let registers = bytes.bindMemory(to: UInt32.self)
+                return (registers[0], Int16(truncatingIfNeeded: registers[1]), Int16(truncatingIfNeeded: registers[2]))
+            }
+            let string: PascalString
+            do throws(MacError) {
+                guard let resources else { throw MacError.resourceNotFound }
+                let list = try StringList(bytes: resources.bytes(type: StringList.resourceType, id: arguments.1))
+                string = list[Int(arguments.2)]
+                lastResourceError = 0
+            } catch {
+                lastResourceError = error.code
+                string = PascalString()
+            }
+            guard writeGuest(arguments.0, string.lengthPrefixed) else {
+                guestMemoryFault = ToolboxMemoryFault(address: arguments.0, write: true)
+                return false
+            }
+        case "ResError":
+            frame.returnGPR = UInt32(bitPattern: lastResourceError)
         case "Gestalt":
             let arguments = withUnsafeBytes(of: frame.gpr) { bytes in
                 let registers = bytes.bindMemory(to: UInt32.self)

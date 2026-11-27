@@ -72,6 +72,9 @@ a fabricated button selection. Guest filters, other item kinds/stages, alert ico
 remain pending. Use `--framebuffer output.ppm` to save the headless screen.
 MacGzip displays “Sorry, System 7 required” and `gestaltUndefSelectorErr` after 1,513 instructions.
 This is an error-alert path, not a successful launch; the `evnt` Gestalt selector remains undefined.
+`AEInstallEventHandler`, `AEGetEventHandler`, and `AERemoveEventHandler` use Graphite's
+separate application and system handler tables. Guest procedure addresses remain opaque;
+descriptor marshaling and guest callback execution are pending, so AppleEvents remain unadvertised.
 Further Toolbox dispatch and full application startup remain pending, as do Linux/ppc32
 and Embedded Swift validation.
 

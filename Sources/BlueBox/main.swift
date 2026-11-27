@@ -41,13 +41,10 @@ do {
         index += 1
     }
     guard let path else { throw BlueBoxError.invalidArguments(usage) }
-    let data = try Data(contentsOf: URL(fileURLWithPath: path))
-    let report = try data.withUnsafeBytes { bytes in
-        if bytes.count >= 8, Array(bytes.prefix(8)) == Array("Joy!peff".utf8) {
-            return try BlueBoxRunner.run(bytes: bytes, entry: entry, maxInstructions: limit)
-        }
-        let archive = try MacBinaryReader.parse(bytes)
-        return try BlueBoxRunner.run(bytes: archive.dataFork, entry: entry, maxInstructions: limit)
+    let application = try BlueBoxApplication.load(path: path)
+    let report = try application.dataFork.withUnsafeBytes { bytes in
+        try BlueBoxRunner.run(bytes: bytes, resourceFork: application.resourceFork,
+                             entry: entry, maxInstructions: limit)
     }
     print("Loaded \(report.sectionCount) sections; entry=\(hex(report.codeAddress)), toc=\(hex(report.toc)), sp=\(hex(report.initialStackPointer))")
     print(report.diagnostic)

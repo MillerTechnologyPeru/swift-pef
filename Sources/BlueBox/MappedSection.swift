@@ -7,6 +7,9 @@ import Darwin
 
 enum BlueBoxError: Error {
     case mmapFailed
+    case addressSpaceReservationFailed
+    case invalidGuestRange
+    case guestMemoryCommitFailed
 }
 
 /// Anonymous host memory backing one instantiated PEF section.

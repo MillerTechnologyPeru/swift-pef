@@ -10,6 +10,10 @@ enum BlueBoxError: Error {
     case addressSpaceReservationFailed
     case invalidGuestRange
     case guestMemoryCommitFailed
+    case missingEntry(String)
+    case invalidEntryVector(UInt32)
+    case guestLayoutTooLarge
+    case invalidArguments(String)
 }
 
 /// Anonymous host memory backing one instantiated PEF section.

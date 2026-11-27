@@ -13,6 +13,7 @@ import PackageDescription
 // Gestalt reports an explicit guest profile instead of the host environment.
 // Application resource forks feed tested Graphite resource and string-list bridges.
 // Tested Pascal/C conversion bridges operate on checked guest bytes, including overlapping buffers.
+// Tested BlockMove bridges preserve overlapping data and validate complete guest ranges.
 // PEFKit is Foundation-free. CResourceIO isolates platform xattr calls from the format parsers.
 // Embedded Swift is not enabled or validated yet; it also needs BinaryParsingEmbedded.
 

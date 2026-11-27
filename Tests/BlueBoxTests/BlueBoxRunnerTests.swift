@@ -91,14 +91,19 @@ import Graphite
         #expect(report.handledImportCount == 3)
     }
 
-    @Test func guestReceivesLaunchEventAndCallsToolboxFromItsHandler() throws {
+    @Test(arguments: [false, true]) func guestReceivesLaunchEventAndCallsToolboxFromItsHandler(wrapped: Bool) throws {
         func invoke(_ offset: UInt32) -> [UInt32] {
             [0x81820000 | offset, 0x800C0000, 0x804C0004, 0x7C0903A6, 0x4E800421]
         }
         var code: [UInt32] = [0x7FC802A6, 0x7C5F1378, // preserve main LR/TOC
-            0x9042002C, // callback TVector TOC = this fragment's TOC
-            0x3C606165, 0x60637674, 0x3C806F61, 0x60847070,
-            0x38A20028, 0x38C0FFCE, 0x38E00000]
+            0x9042002C] // callback TVector TOC = this fragment's TOC
+        if wrapped {
+            code += [0x38620028, 0x38800FE0, 0x38A00001]
+            code += invoke(16) // NewRoutineDescriptor
+            code += [0x7C7C1B78, 0x7FE2FB78] // preserve UPP and restore TOC
+        }
+        code += [0x3C606165, 0x60637674, 0x3C806F61, 0x60847070,
+            wrapped ? 0x7F85E378 : 0x38A20028, 0x38C0FFCE, 0x38E00000]
         code += invoke(4) // AEInstallEventHandler
         code += [0x7FE2FB78, 0x38600400, 0x38820040]
         code += invoke(8) // GetNextEvent
@@ -111,17 +116,17 @@ import Graphite
         code += invoke(8) // nested Toolbox call; the launch event has already been consumed
         code += [0x7F63DB78, 0x7FA803A6, 0x4E800020] // return the negative refcon as OSErr
         let bytes = executable(code, imported: true, importedSymbol: "AEInstallEventHandler",
-                               secondaryImport: "GetNextEvent", additionalImports: ["AEProcessAppleEvent"],
+                               secondaryImport: "GetNextEvent", additionalImports: ["AEProcessAppleEvent"] + (wrapped ? ["NewRoutineDescriptor"] : []),
                                callbackOffset: callbackOffset)
         let report = try bytes.withUnsafeBytes { try BlueBoxRunner.run(bytes: $0) }
         #expect(report.execution.stop == .returned)
         #expect(Int32(bitPattern: report.execution.r3) == -50)
-        #expect(report.handledImportCount == 4)
+        #expect(report.handledImportCount == (wrapped ? 5 : 4))
         #expect(report.execution.toc == report.toc)
         #expect(report.execution.stackPointer == report.initialStackPointer)
-        let limited = try bytes.withUnsafeBytes { try BlueBoxRunner.run(bytes: $0, maxInstructions: 35) }
+        let limited = try bytes.withUnsafeBytes { try BlueBoxRunner.run(bytes: $0, maxInstructions: wrapped ? 50 : 35) }
         #expect(limited.execution.stop == .instructionLimit)
-        #expect(limited.execution.instructions <= 35)
+        #expect(limited.execution.instructions <= (wrapped ? 50 : 35))
         var looping = bytes
         let handlerStart = 128 + Int(callbackOffset)
         looping.replaceSubrange(handlerStart..<handlerStart + 4, with: be32(0x48000000))
@@ -134,6 +139,16 @@ import Graphite
         let faultReport = try faulting.withUnsafeBytes { try BlueBoxRunner.run(bytes: $0) }
         #expect(faultReport.execution.stop == .illegalInstruction(0))
         #expect(faultReport.execution.pc == 0x01000000 + callbackOffset)
+        if wrapped {
+            var mismatched = bytes
+            mismatched.replaceSubrange(128 + 4 * 4..<128 + 5 * 4, with: be32(0x38800000))
+            let unsupported = try mismatched.withUnsafeBytes { try BlueBoxRunner.run(bytes: $0) }
+            guard case .unsupportedRoutineDescriptor = unsupported.execution.stop else {
+                Issue.record("Expected unsupported routine descriptor: \(unsupported.diagnostic)")
+                return
+            }
+            #expect(unsupported.diagnostic.contains("unsupported Mixed Mode routine descriptor"))
+        }
     }
 
     @Test func loadsTVectorTOCAndStackAndReturns() throws {

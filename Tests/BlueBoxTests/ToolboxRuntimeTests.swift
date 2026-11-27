@@ -251,4 +251,54 @@ import Testing
         #expect(runtime.guestMemoryFault == 0x12345678)
         #expect(runtime.handledImportCount == 1)
     }
+
+    @Test func drawsEmptyMenuBarWithoutChangingDesktopOrCurrentPort() throws {
+        var runtime = ToolboxRuntime()
+        var frame = MORAInvocationFrame()
+        #expect(runtime.dispatch(symbol("InitWindows"), frame: &frame, writeGuest: { _, _ in true }))
+        let screen = try #require(runtime.quickDraw.mainDevice)
+        screen.pixels.fill(screen.bounds, with: 1)
+        runtime.quickDraw.currentPort = runtime.windowManagerPort
+        let previousPort = runtime.quickDraw.currentPort
+        #expect(runtime.dispatch(symbol("InitMenus"), frame: &frame))
+        #expect(screen.pixels.value(column: 10, row: 0) == 0)
+        #expect(screen.pixels.value(column: 10, row: 18) == 0)
+        #expect(screen.pixels.value(column: 10, row: 19) == 1)
+        #expect(screen.pixels.value(column: 10, row: 20) == 1)
+        #expect(runtime.quickDraw.currentPort === previousPort)
+        #expect(runtime.menuManager?.menuIDs.isEmpty == true)
+        let manager = try #require(runtime.menuManager)
+        #expect(runtime.dispatch(symbol("InitMenus"), frame: &frame))
+        #expect(runtime.menuManager === manager)
+        #expect(runtime.dispatch(symbol("GetMBarHeight"), frame: &frame))
+        #expect(frame.returnGPR == 20)
+    }
+
+    @Test func clearMenuBarWaitsForExplicitRedraw() throws {
+        var runtime = ToolboxRuntime()
+        var frame = MORAInvocationFrame()
+        #expect(runtime.dispatch(symbol("InitWindows"), frame: &frame, writeGuest: { _, _ in true }))
+        #expect(runtime.dispatch(symbol("InitMenus"), frame: &frame))
+        let screen = try #require(runtime.quickDraw.mainDevice)
+        screen.pixels.fill(screen.bounds, with: 1)
+        #expect(runtime.dispatch(symbol("ClearMenuBar"), frame: &frame))
+        #expect(screen.pixels.value(column: 10, row: 0) == 1)
+        #expect(runtime.dispatch(symbol("DrawMenuBar"), frame: &frame))
+        #expect(screen.pixels.value(column: 10, row: 0) == 0)
+        #expect(screen.pixels.value(column: 10, row: 19) == 1)
+    }
+
+    @Test func menuCallsRequireTheirManagerAndRemainPerRuntime() {
+        var runtime = ToolboxRuntime()
+        var other = ToolboxRuntime()
+        var frame = MORAInvocationFrame()
+        #expect(!runtime.dispatch(symbol("InitMenus"), frame: &frame))
+        #expect(!runtime.dispatch(symbol("DrawMenuBar"), frame: &frame))
+        #expect(!runtime.dispatch(symbol("ClearMenuBar"), frame: &frame))
+        #expect(runtime.handledImportCount == 0)
+        #expect(runtime.dispatch(symbol("InitWindows"), frame: &frame, writeGuest: { _, _ in true }))
+        #expect(runtime.dispatch(symbol("InitMenus"), frame: &frame))
+        #expect(other.menuManager == nil)
+        #expect(!other.dispatch(symbol("DrawMenuBar"), frame: &frame))
+    }
 }

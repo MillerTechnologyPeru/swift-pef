@@ -52,8 +52,12 @@ Gestalt uses an explicit guest profile: a Mac OS 9.0 compatibility version, Powe
 architecture, 16 MiB memory budget, and monochrome QuickDraw. It writes checked big-endian
 responses; unimplemented selectors return `gestaltUndefSelectorErr` without touching the
 response. Host capabilities and optional managers are not advertised.
-MacGzip now passes its first capability query, reaching `InterfaceLib:GetIndString`
-after 193 instructions.
+The CLI attaches application resource forks from native attributes, AppleDouble sidecars,
+or MacBinary archives. `GetIndString` uses Graphite's `STR#` reader and copies a checked
+Pascal string to guest memory; `ResError` reports missing or malformed resource errors.
+Missing resources and out-of-range indexes produce empty strings. Only the application's
+read-only resource fork is connected; resource handles, file chains, and writes remain pending.
+MacGzip now reads its first resource string, reaching `InterfaceLib:p2cstr` after 202 instructions.
 Further Toolbox dispatch and full application startup remain pending, as do Linux/ppc32
 and Embedded Swift validation.
 

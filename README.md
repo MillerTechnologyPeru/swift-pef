@@ -112,6 +112,10 @@ is not yet orchestrated automatically. Exit codes are 0 for a guest return,
 124 for the instruction limit, 1 for an execution stop, and 2 for a loading or argument error.
 The Graphite and device integrations below describe the intended architecture.
 
+Native PPC32 ABI bridge groundwork is documented in [MORA_ABI_BRIDGE.md](docs/MORA_ABI_BRIDGE.md).
+The C register-call API and host checks are implemented; native assembly validation and
+integration into the PPC32 runner remain pending.
+
 ## Targets
 - **`PEFKit`**: Foundation-free Swift library (Embedded Swift validation pending) implementing the `Joy!peff` container parser, `pidata` pattern-initialized data decompressor, 16-bit loader relocation VM, `PEFComputeHashWord` symbol lookup, and Resource Fork readers (AppleDouble `._*`, MacBinary `.bin`, Linux `xattr`).
 - **`BlueBox`**: Classic Mac OS 9 HLE runner executable bridging the Mac OS Runtime for Architectures (MORA) ABI and `TVector`s to `PureSwift/Graphite`, with Musashi 68k UPP fallback (`kM68kISA`), ALSA big-endian audio, and dual presentation backends for **QEMU `mac99`** (software/SDL) and **Apple iBook G4** (Mesa `r200`/`r300` hardware OpenGL).

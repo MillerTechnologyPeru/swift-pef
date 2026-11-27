@@ -108,7 +108,7 @@ import Testing
             return true
         }))
         #expect(!wrote)
-        #expect(runtime.guestMemoryFault == 0)
+        #expect(runtime.guestMemoryFault == ToolboxMemoryFault(address: 0, write: true))
         #expect(runtime.globalsAddress == nil)
         #expect(runtime.handledImportCount == 0)
     }
@@ -179,7 +179,7 @@ import Testing
         var frame = MORAInvocationFrame()
         withUnsafeMutableBytes(of: &frame.gpr) { $0.bindMemory(to: UInt32.self)[1] = 0x12345678 }
         #expect(!runtime.dispatch(symbol("GetFontName"), frame: &frame, writeGuest: { _, _ in false }))
-        #expect(runtime.guestMemoryFault == 0x12345678)
+        #expect(runtime.guestMemoryFault == ToolboxMemoryFault(address: 0x12345678, write: true))
         #expect(runtime.handledImportCount == 0)
     }
 
@@ -230,7 +230,7 @@ import Testing
         var frame = MORAInvocationFrame()
         #expect(!runtime.dispatch(symbol("InitWindows"), frame: &frame, writeGuest: { _, _ in false }))
         #expect(runtime.windowManagerPort == nil)
-        #expect(runtime.guestMemoryFault == GuestWindowManager.address)
+        #expect(runtime.guestMemoryFault == ToolboxMemoryFault(address: GuestWindowManager.address, write: true))
         #expect(runtime.handledImportCount == 0)
     }
 
@@ -248,7 +248,7 @@ import Testing
         #expect(runtime.dispatch(symbol("InitWindows"), frame: &frame, writeGuest: { _, _ in true }))
         withUnsafeMutableBytes(of: &frame.gpr) { $0.bindMemory(to: UInt32.self)[0] = 0x12345678 }
         #expect(!runtime.dispatch(symbol("GetWMgrPort"), frame: &frame, writeGuest: { _, _ in false }))
-        #expect(runtime.guestMemoryFault == 0x12345678)
+        #expect(runtime.guestMemoryFault == ToolboxMemoryFault(address: 0x12345678, write: true))
         #expect(runtime.handledImportCount == 1)
     }
 
@@ -331,7 +331,7 @@ import Testing
         var frame = MORAInvocationFrame()
         #expect(!runtime.dispatch(symbol("TEInit"), frame: &frame, writeGuest: { _, _ in false }))
         #expect(runtime.textEditScrapLength == nil)
-        #expect(runtime.guestMemoryFault == GuestTextEdit.scrapHandle)
+        #expect(runtime.guestMemoryFault == ToolboxMemoryFault(address: GuestTextEdit.scrapHandle, write: true))
         #expect(runtime.handledImportCount == 0)
     }
 
@@ -344,5 +344,62 @@ import Testing
         }
         #expect(frame.returnGPR == 0x1234)
         #expect(runtime.handledImportCount == 0)
+    }
+
+    @Test func initializesPerRunDialogDefaultsAndRetainsGuestResumePointer() {
+        var runtime = ToolboxRuntime()
+        let other = ToolboxRuntime()
+        var frame = MORAInvocationFrame()
+        withUnsafeMutableBytes(of: &frame.gpr) { $0.bindMemory(to: UInt32.self)[0] = 0x12345678 }
+        #expect(runtime.dispatch(symbol("InitDialogs"), frame: &frame))
+        #expect(runtime.dialogs?.resumeProcedure == 0x12345678)
+        #expect(runtime.dialogs?.font == 0)
+        #expect(runtime.dialogs?.parameterText.map(\.bytes) == [[], [], [], []])
+        #expect(other.dialogs == nil)
+    }
+
+    @Test func setsDialogFontThroughBothSpellings() {
+        var runtime = ToolboxRuntime()
+        var frame = MORAInvocationFrame()
+        #expect(!runtime.dispatch(symbol("SetDialogFont"), frame: &frame))
+        #expect(runtime.dispatch(symbol("InitDialogs"), frame: &frame))
+        for name in ["SetDialogFont", "SetDAFont"] {
+            withUnsafeMutableBytes(of: &frame.gpr) { $0.bindMemory(to: UInt32.self)[0] = 0xFFFFFFFF }
+            #expect(runtime.dispatch(symbol(name), frame: &frame))
+            #expect(runtime.dialogs?.font == -1)
+        }
+    }
+
+    @Test func copiesAllFourDialogParametersAsMacRomanBytes() {
+        var runtime = ToolboxRuntime()
+        var frame = MORAInvocationFrame()
+        #expect(runtime.dispatch(symbol("InitDialogs"), frame: &frame))
+        withUnsafeMutableBytes(of: &frame.gpr) { bytes in
+            let registers = bytes.bindMemory(to: UInt32.self)
+            for index in 0..<4 { registers[index] = UInt32(100 + index) }
+        }
+        var strings: [[UInt8]] = [[1, 0x8E], [0], [3, 65, 66, 67], [1, 90]]
+        let handled = runtime.dispatch(symbol("ParamText"), frame: &frame, readGuest: { address, count in
+            Array(strings[Int(address) - 100].prefix(count))
+        })
+        #expect(handled)
+        strings[0] = [0] // The manager owns its copy, independent of the guest source.
+        #expect(runtime.dialogs?.parameterText.map(\.bytes) == [[0x8E], [], [65, 66, 67], [90]])
+    }
+
+    @Test func truncatedDialogParameterDoesNotPublishPartialChanges() {
+        var runtime = ToolboxRuntime()
+        var frame = MORAInvocationFrame()
+        #expect(runtime.dispatch(symbol("InitDialogs"), frame: &frame))
+        withUnsafeMutableBytes(of: &frame.gpr) { bytes in
+            let registers = bytes.bindMemory(to: UInt32.self)
+            for index in 0..<4 { registers[index] = UInt32(100 + index) }
+        }
+        #expect(!runtime.dispatch(symbol("ParamText"), frame: &frame, readGuest: { address, count in
+            address == 101 ? [3] : Array([1, 65].prefix(count))
+        }))
+        #expect(runtime.guestMemoryFault == ToolboxMemoryFault(address: 101, write: false))
+        #expect(runtime.dialogs?.parameterText.map(\.bytes) == [[], [], [], []])
+        #expect(runtime.handledImportCount == 1)
     }
 }

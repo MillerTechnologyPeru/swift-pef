@@ -85,7 +85,14 @@ event waits, and host input remain pending; `evnt` stays unadvertised.
 `NewRoutineDescriptor`, `DisposeRoutineDescriptor`, and `GetCurrentISA` support prepared
 PowerPC callbacks. Callback invocation decodes version-seven, single-record descriptors as
 well as raw TVectors. Other architectures, relative/unprepared records, selector dispatch,
-and `CallUniversalProc` remain pending. BBEdit Lite now reaches `FSpOpenDF` after 887 instructions.
+and `CallUniversalProc` remain pending.
+The initial File Manager exposes a read-only volume (-100), with explicitly mounted files in
+its root directory (ID 2). The CLI mounts the loaded application's logical data/resource forks
+under its input basename. `FSMakeFSSpec`, `FSpOpenDF`/`FSpOpenRF`, `FSRead`, `FSClose`,
+`GetEOF`, `GetFPos`, and `SetFPos` support checked guest records and independent open-file marks.
+Writes, directory traversal, and a general host filesystem catalog remain pending.
+BBEdit Lite now calls `FSpOpenDF` after 887 instructions but supplies a null `FSSpec` pointer,
+which stops with a guest memory diagnostic. Its startup context still needs investigation.
 Further Toolbox dispatch and full application startup remain pending, as do Linux/ppc32
 and Embedded Swift validation.
 

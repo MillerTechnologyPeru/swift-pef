@@ -52,7 +52,8 @@ Reference specifications:
 Validation includes synthetic format fixtures, native macOS xattr tests, and 30 local real-file
 cases: preparation/export lookup/entry-vector relocation for 15 PowerPC PEF payloads and resource
 parsing for their 15 AppleDouble sidecars. Payloads include MacGzip 1.1.3, MacZip 1.06, BBEdit Lite's
-Classic and Carbon variants, and eleven BBEdit plug-ins. The full suite passes 236 cases.
+Classic and Carbon variants, and eleven BBEdit plug-ins. On the current arm64 macOS host,
+239 tests pass and two native PPC32 ABI tests are skipped.
 Real-file tests use placeholder import addresses and never execute guest code. They use
 `.build/fixtures` by default, allow `PEF_FIXTURES_DIR` to override the directory, and are disabled
 when `manifest.json` is absent. Download provenance and hashes remain in the local manifest.
@@ -230,6 +231,11 @@ Unknown libraries, symbols, and other data imports remain explicit failures. Fur
 dispatch, complete application startup, Linux/ppc32 cross-platform tests, and Embedded
 Swift validation remain outstanding.
 The phases below describe the larger runtime roadmap.
+
+CMORA now provides a register-call API, per-entry dispatcher context, explicit unsupported-host
+status, shared C/assembly layout assertions, and revised MORA/SysV trampolines. Native assembly
+and Linux-only context handling still need PPC32 compilation and execution validation; the
+native BlueBox runner remains unavailable. See [MORA_ABI_BRIDGE.md](MORA_ABI_BRIDGE.md).
 
 ## 1. Overview & Target Platforms
 `swift-pef` provides a clean-room Classic Mac OS 9 PowerPC HLE runtime without requiring an Apple Mac OS ROM, System Folder disk image, or full-system CPU virtualization:

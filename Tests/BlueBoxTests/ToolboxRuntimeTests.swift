@@ -301,4 +301,48 @@ import Testing
         #expect(other.menuManager == nil)
         #expect(!other.dispatch(symbol("DrawMenuBar"), frame: &frame))
     }
+
+    @Test func initializesEmptyTextEditScrapOnceAndReturnsGuestHandle() {
+        var runtime = ToolboxRuntime()
+        let other = ToolboxRuntime()
+        var frame = MORAInvocationFrame()
+        var writes: [(UInt32, [UInt8])] = []
+        let initialized = runtime.dispatch(symbol("TEInit"), frame: &frame, writeGuest: { address, bytes in
+            writes.append((address, bytes))
+            return true
+        })
+        #expect(initialized)
+        #expect(writes.count == 1)
+        #expect(writes.first?.0 == GuestTextEdit.scrapHandle)
+        #expect(writes.first?.1 == [0, 0, 0, 0])
+        #expect(runtime.textEditScrapLength == 0)
+        #expect(other.textEditScrapLength == nil)
+        #expect(runtime.dispatch(symbol("TEInit"), frame: &frame)) // Existing scrap is preserved.
+        for name in ["TEScrapHandle", "TEGetScrapHandle"] {
+            #expect(runtime.dispatch(symbol(name), frame: &frame))
+            #expect(frame.returnGPR == GuestTextEdit.scrapHandle)
+        }
+        #expect(runtime.dispatch(symbol("TEGetScrapLength"), frame: &frame))
+        #expect(frame.returnGPR == 0)
+    }
+
+    @Test func failedTextEditInitializationDoesNotPublishScrap() {
+        var runtime = ToolboxRuntime()
+        var frame = MORAInvocationFrame()
+        #expect(!runtime.dispatch(symbol("TEInit"), frame: &frame, writeGuest: { _, _ in false }))
+        #expect(runtime.textEditScrapLength == nil)
+        #expect(runtime.guestMemoryFault == GuestTextEdit.scrapHandle)
+        #expect(runtime.handledImportCount == 0)
+    }
+
+    @Test func textEditScrapQueriesRequireInitialization() {
+        var runtime = ToolboxRuntime()
+        var frame = MORAInvocationFrame()
+        frame.returnGPR = 0x1234
+        for name in ["TEScrapHandle", "TEGetScrapHandle", "TEGetScrapLength"] {
+            #expect(!runtime.dispatch(symbol(name), frame: &frame))
+        }
+        #expect(frame.returnGPR == 0x1234)
+        #expect(runtime.handledImportCount == 0)
+    }
 }

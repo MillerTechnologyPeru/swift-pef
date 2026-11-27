@@ -1,0 +1,18 @@
+#ifndef CMORA_OFFSETS_H
+#define CMORA_OFFSETS_H
+
+/* Shared by the assembler and C layout assertions. */
+#define MORA_FRAME_GPR 0
+#define MORA_FRAME_FPR 32
+#define MORA_FRAME_CALLER_SP 136
+#define MORA_FRAME_RETURN_GPR 140
+#define MORA_FRAME_RETURN_GPR2 144
+#define MORA_FRAME_RETURN_FPR 152
+#define MORA_FRAME_SIZE 160
+
+#define MORA_CONTEXT_DISPATCH 4
+#define MORA_CONTEXT_USER_DATA 8
+#define MORA_CONTEXT_HOST_R2 12
+#define MORA_CONTEXT_HOST_R13 16
+
+#endif

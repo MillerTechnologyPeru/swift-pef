@@ -82,6 +82,19 @@ struct GuestHeap {
         lastError = 0
     }
 
+    /// Create a loaded handle without exposing a partially populated resource to the guest.
+    mutating func loadedHandle(bytes: [UInt8], write: (UInt32, [UInt8]) -> Bool) -> UInt32 {
+        guard bytes.count <= Int32.max else { lastError = -108; return 0 }
+        let handle = newHandle(size: Int32(bytes.count), clear: false, write: write)
+        guard handle != 0, let pointer = handles[handle] else { return 0 }
+        if !bytes.isEmpty, !write(pointer, bytes) {
+            disposeHandle(handle, write: write)
+            memoryFault = ToolboxMemoryFault(address: pointer, write: true)
+            return 0
+        }
+        return handle
+    }
+
     mutating func disposeHandle(_ handle: UInt32, write: (UInt32, [UInt8]) -> Bool) {
         guard let pointer = handles[handle] else { lastError = handle == 0 ? -109 : -111; return }
         guard write(handle, [0, 0, 0, 0]) else {

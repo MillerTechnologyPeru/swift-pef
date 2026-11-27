@@ -1,3 +1,4 @@
+#if !arch(powerpc)
 import Testing
 import PPC32Core
 @testable import BlueBox
@@ -94,3 +95,5 @@ import PPC32Core
         }
     }
 }
+
+#endif

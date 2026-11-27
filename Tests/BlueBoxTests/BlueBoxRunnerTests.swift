@@ -325,6 +325,24 @@ import Graphite
         #expect(report.handledImportCount == 1)
     }
 
+    @Test func guestInstallsAndRetrievesAppleEventHandler() throws {
+        // Save LR/TOC, register an opaque guest UPP and refcon, then retrieve both into guest data.
+        let code: [UInt32] = [0x7FC802A6, 0x3BE20000, 0x3C606165, 0x60637674,
+                              0x3C806F61, 0x60847070, 0x3CA00100, 0x60A50200, 0x38C0FFFF, 0x38E00000,
+                              0x81820004, 0x800C0000, 0x804C0004, 0x7C0903A6, 0x4E800421,
+                              0x385F0000, 0x3BA20028, 0x3C606165, 0x60637674, 0x3C806F61, 0x60847070,
+                              0x38BD0000, 0x38DD0004, 0x38E00000,
+                              0x81820008, 0x800C0000, 0x804C0004, 0x7C0903A6, 0x4E800421,
+                              0x807D0000, 0x7FC803A6, 0x4E800020]
+        let report = try executable(code, imported: true, importedSymbol: "AEInstallEventHandler",
+                                    secondaryImport: "AEGetEventHandler").withUnsafeBytes {
+            try BlueBoxRunner.run(bytes: $0)
+        }
+        #expect(report.execution.stop == .returned)
+        #expect(report.execution.r3 == 0x01000200)
+        #expect(report.handledImportCount == 2)
+    }
+
     @Test func initGrafRejectsReadOnlyGuestDestination() throws {
         // Pass thePort=code+126, making InitGraf's first write target the code section.
         let code: [UInt32] = [0x3C600100, 0x3863007E,

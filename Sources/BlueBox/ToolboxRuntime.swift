@@ -6,6 +6,11 @@ struct ToolboxMemoryFault: Error, Equatable {
     let write: Bool
 }
 
+private struct GuestResourceKey: Hashable {
+    let type: FourCharCode
+    let id: Int16
+}
+
 /// Per-fragment Toolbox state. Guest pointers are never treated as host pointers.
 struct ToolboxRuntime {
     private let ticks: () -> UInt32
@@ -23,6 +28,7 @@ struct ToolboxRuntime {
     private let gestalt = GuestGestalt.makeTable()
     private let resources: ResourceFile?
     private(set) var lastResourceError: Int32 = 0
+    private var resourceHandles: [GuestResourceKey: UInt32] = [:]
 
     /// Low-level event kinds in chronological order; host input delivery is still pending.
     var pendingEventKinds: [UInt16] = []
@@ -50,6 +56,29 @@ struct ToolboxRuntime {
             return false
         }
         switch symbol.symbol {
+        case "GetResource", "Get1Resource", "GetString":
+            guard let writeGuest else { return false }
+            let arguments = withUnsafeBytes(of: frame.gpr) { bytes in
+                let registers = bytes.bindMemory(to: UInt32.self)
+                return (registers[0], registers[1])
+            }
+            let key = GuestResourceKey(type: symbol.symbol == "GetString" ? "STR " : FourCharCode(arguments.0),
+                                       id: Int16(truncatingIfNeeded: symbol.symbol == "GetString" ? arguments.0 : arguments.1))
+            frame.returnGPR = loadResource(key, write: writeGuest)
+        case "ReleaseResource", "DetachResource":
+            let handle = withUnsafeBytes(of: frame.gpr) { $0.bindMemory(to: UInt32.self)[0] }
+            if resourceHandles.values.contains(handle) {
+                if symbol.symbol == "ReleaseResource" {
+                    guard let writeGuest else { return false }
+                    heap.disposeHandle(handle, write: writeGuest)
+                }
+                if heap.memoryFault == nil {
+                    resourceHandles = resourceHandles.filter { $0.value != handle }
+                    lastResourceError = 0
+                }
+            } else {
+                lastResourceError = MacError.resourceNotFound.code
+            }
         case "BlockMove", "BlockMoveData", "BlockMoveUncached", "BlockMoveDataUncached":
             guard let readGuest, let writeGuest else { return false }
             let arguments = withUnsafeBytes(of: frame.gpr) { bytes in
@@ -148,6 +177,9 @@ struct ToolboxRuntime {
             case "DisposeHandle", "DisposHandle":
                 guard let writeGuest else { return false }
                 heap.disposeHandle(address, write: writeGuest)
+                if heap.memoryFault == nil, heap.lastError == 0 {
+                    resourceHandles = resourceHandles.filter { $0.value != address }
+                }
             case "GetPtrSize": frame.returnGPR = UInt32(bitPattern: heap.pointerSize(address))
             default: frame.returnGPR = UInt32(bitPattern: heap.handleSize(address))
             }
@@ -292,6 +324,29 @@ struct ToolboxRuntime {
         }
         handledImportCount += 1
         return true
+    }
+
+    /// Keep one loaded guest handle per application resource until release or detach.
+    private mutating func loadResource(_ key: GuestResourceKey, write: (UInt32, [UInt8]) -> Bool) -> UInt32 {
+        if let handle = resourceHandles[key] {
+            lastResourceError = 0
+            return handle
+        }
+        do throws(MacError) {
+            guard let resources else { throw MacError.resourceNotFound }
+            let bytes = try resources.bytes(type: key.type, id: key.id)
+            let handle = heap.loadedHandle(bytes: bytes, write: write)
+            guard handle != 0 else {
+                lastResourceError = heap.lastError == 0 ? -108 : Int32(heap.lastError)
+                return 0
+            }
+            resourceHandles[key] = handle
+            lastResourceError = 0
+            return handle
+        } catch {
+            lastResourceError = error.code
+            return 0
+        }
     }
 
     /// Load the built-in fallback once per fragment; resource and host font loading are separate.

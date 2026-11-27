@@ -1,5 +1,58 @@
 # Architecture & Implementation Blueprint (`swift-pef`)
 
+## Current PEFKit implementation
+
+The library now provides:
+
+- `PEFContainer.prepare`: validates caller-supplied section allocations, unpacks and zero-fills
+  every instantiated section, applies relocations, and returns main/init/term entry addresses.
+  It handles nonzero preferred section addresses and checks guest range alignment/overlap.
+- `PEFLoaderSection.resolveImports`: resolves library metadata and symbols through host callbacks,
+  checks complete/disjoint library ownership, and implements weak-library/weak-symbol rules.
+- `PEFContainer`: validates section layout, retrieves section bytes/names, materializes initialized
+  data and zero-fill, and checks loader section references.
+- `PEFLoaderSection`: validates import/export tables, bounded loader strings and relocation
+  streams; resolves section-relative, absolute (-2), and re-exported import (-3) symbols.
+- `PEFRelocator`: executes all standard relocation families, including small/large repeats,
+  using 32-bit section adjustments and resolved import addresses. Repeats cannot nest, must
+  begin at instruction boundaries, and share a configurable operation budget.
+- `ResourceFork`: validates maps, reference lists, Pascal names and length-prefixed payloads.
+- `AppleDoubleReader` and `MacBinaryReader`: expose borrowed resource/data forks. MacBinary
+  II/III headers are CRC checked and secondary headers honor 128-byte alignment.
+- `XattrResourceReader`: reads into caller-owned storage through the CResourceIO platform shim.
+
+Parsing and relocation operate without Foundation or internal buffer allocations. All returned
+views require their caller-owned storage to remain alive and unchanged. Relocation can leave
+partial fixups on error; discard the destination on failure. The default relocation budget is
+1,000,000 operations, including writes and repeated instructions; callers may choose another limit.
+
+Preparation flow:
+1. Keep the source bytes alive and create a `PEFContainer`.
+2. Obtain its optional `loaderSection()`. Allocate an import-address buffer with
+   `totalImportedSymbolCount` words and call `resolveImports`. The library callback returns
+   an opaque host registry ID or nil; the symbol callback returns a guest address or nil.
+   A present weak library still must supply every required symbol.
+3. Allocate one `PEFSectionAllocation` per instantiated section, in section order, using its
+   `totalLength` and alignment. Keep guest ranges disjoint. The host pointer and guest address
+   can differ; PEFKit does not map host virtual memory.
+4. Provide one scratch word per section and call `prepare` with the resolved imports.
+   All writable buffers must be disjoint from each other and from the source.
+5. Use the returned guest entry-record addresses in the execution backend. PEFKit does not
+   execute initialization/termination routines, enforce library version compatibility, or
+   schedule library initialization; those are the host CFM runtime's responsibility.
+   Export addresses remain available through `PEFLoaderSection.address(of:sectionAddresses:importedAddresses:)`.
+
+Reference specifications:
+
+- [Apple, Mac OS Runtime Architectures, PEF Structure](https://dev.os9.ca/techpubs/mac/runtimehtml/RTArch-89.html)
+- [Apple, Resource File Format](https://dev.os9.ca/techpubs/mac/MoreToolbox/MoreToolbox-99.html)
+- [Apple, AppleSingle/AppleDouble Developer's Note](https://nulib.com/library/AppleSingle_AppleDouble.pdf)
+- [MacBinary original I/II/III specifications, preserved mirror](https://github.com/mietek/theunarchiver/wiki/MacBinarySpecs)
+
+Validation uses synthetic format fixtures and native macOS xattr tests. Real application
+fixtures, Linux/ppc32 cross-platform tests, and Embedded Swift validation remain outstanding.
+The phases below describe the larger runtime roadmap.
+
 ## 1. Overview & Target Platforms
 `swift-pef` provides a clean-room Classic Mac OS 9 PowerPC HLE runtime without requiring an Apple Mac OS ROM, System Folder disk image, or full-system CPU virtualization:
 1. **QEMU `mac99` (`qemu-system-ppc -M mac99 -cpu G4`)**: Primary development, GDB debugging, and 2D software-rendered validation environment.

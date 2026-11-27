@@ -30,6 +30,7 @@ struct ToolboxRuntime {
     private(set) var lastResourceError: Int32 = 0
     private var resourceHandles: [GuestResourceKey: UInt32] = [:]
     private(set) var pendingAlert: GuestAlert?
+    let appleEventHandlers = GuestAppleEventHandlers()
 
     /// Low-level event kinds in chronological order; host input delivery is still pending.
     var pendingEventKinds: [UInt16] = []
@@ -57,6 +58,35 @@ struct ToolboxRuntime {
             return false
         }
         switch symbol.symbol {
+        case "AEInstallEventHandler", "AEGetEventHandler", "AERemoveEventHandler":
+            let arguments = withUnsafeBytes(of: frame.gpr) { Array($0.bindMemory(to: UInt32.self).prefix(5)) }
+            do throws(MacError) {
+                switch symbol.symbol {
+                case "AEInstallEventHandler":
+                    try appleEventHandlers.install(eventClass: arguments[0], eventID: arguments[1],
+                        procedure: arguments[2], referenceConstant: arguments[3],
+                        isSystem: UInt8(truncatingIfNeeded: arguments[4]) != 0)
+                case "AERemoveEventHandler":
+                    try appleEventHandlers.remove(eventClass: arguments[0], eventID: arguments[1],
+                        procedure: arguments[2], isSystem: UInt8(truncatingIfNeeded: arguments[3]) != 0)
+                default:
+                    guard let entry = appleEventHandlers.entry(eventClass: arguments[0], eventID: arguments[1],
+                        isSystem: UInt8(truncatingIfNeeded: arguments[4]) != 0) else { throw MacError.handlerNotFound }
+                    guard let writeGuest else { return false }
+                    for (address, value) in [(arguments[2], UInt32(entry.procedure)),
+                                              (arguments[3], UInt32(entry.referenceConstant))] {
+                        var writer = BigEndianWriter(capacity: 4)
+                        writer.write(value)
+                        guard writeGuest(address, writer.bytes) else {
+                            guestMemoryFault = ToolboxMemoryFault(address: address, write: true)
+                            return false
+                        }
+                    }
+                }
+                frame.returnGPR = 0
+            } catch {
+                frame.returnGPR = UInt32(bitPattern: error.code)
+            }
         case "StopAlert":
             guard let resources, let dialogs, let screen = quickDraw.mainDevice else { return false }
             let arguments = withUnsafeBytes(of: frame.gpr) { bytes in

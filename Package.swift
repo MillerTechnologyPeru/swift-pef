@@ -17,6 +17,7 @@ import PackageDescription
 // Tested resource handles load application payloads into the guest heap and retain stable identity.
 // Tested standard StopAlert resources can render into a captured headless framebuffer.
 // Tested AppleEvent descriptors and bounded guest callbacks bridge the initial headless launch event.
+// Mixed Mode routine descriptors wrap prepared guest PowerPC transition vectors.
 // PEFKit is Foundation-free. CResourceIO isolates platform xattr calls from the format parsers.
 // Embedded Swift is not enabled or validated yet; it also needs BinaryParsingEmbedded.
 

@@ -52,7 +52,7 @@ Reference specifications:
 Validation includes synthetic format fixtures, native macOS xattr tests, and 30 local real-file
 cases: preparation/export lookup/entry-vector relocation for 15 PowerPC PEF payloads and resource
 parsing for their 15 AppleDouble sidecars. Payloads include MacGzip 1.1.3, MacZip 1.06, BBEdit Lite's
-Classic and Carbon variants, and eleven BBEdit plug-ins. The full suite passes 207 cases.
+Classic and Carbon variants, and eleven BBEdit plug-ins. The full suite passes 211 cases.
 Real-file tests use placeholder import addresses and never execute guest code. They use
 `.build/fixtures` by default, allow `PEF_FIXTURES_DIR` to override the directory, and are disabled
 when `manifest.json` is absent. Download provenance and hashes remain in the local manifest.
@@ -161,8 +161,15 @@ steps, and preserve the caller's registers. Tests cover interpreted oapp deliver
 call from the handler, negative OSErr, looping/faulting callbacks, descriptor ownership, endian
 conversion, rollback, missing attributes, and invalid guest reads. Validation used Graphite
 master at 7ab800a. MacGzip still reaches its compatibility alert at 1,513 instructions/19 imports;
-MacZip stops at InitMenus (90 instructions), and BBEdit Lite stops at AECreateList (125).
-Lists, descriptor mutation/coercion, AESend, general high-level events, sleeping waits, host
+MacZip stops at InitMenus (90 instructions), and BBEdit Lite passes AECreateList before stopping
+at NewRoutineDescriptor (192 instructions, two serviced imports).
+AECreateList creates unfactored lists and empty records. AEPutDesc/AEPutPtr, AECountItems,
+AEGetNthDesc, and AEDeleteItem bridge list operations through Graphite with signed one-based
+indices and index-zero append. Updates preserve guest handle identity; retrieved/duplicated
+items have independent value ownership. Descriptor trees are bounded to 32 nested levels,
+4,096 nodes, and 16 MiB of payload per updated tree. Tests cover lifecycle, replacement,
+copy independence, errors, depth limits, and interpreted creation/insertion/counting.
+Factored arrays, keyed record/event mutation, coercion, AESend, general high-level events, sleeping waits, host
 input, and Mixed Mode UPP decoding remain pending. The evnt Gestalt selector stays undefined.
 The record layout and event interfaces follow Apple's
 [Introduction to Apple Events](https://developer.apple.com/library/archive/documentation/mac/pdf/Interapplication_Communication/Intro_to_Apple_Events.pdf)

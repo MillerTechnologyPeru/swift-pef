@@ -179,7 +179,12 @@ enum BlueBoxRunner {
                 in: memory, maxInstructions: maxInstructions, memoryRegions: regions,
                 dispatchImport: { index, frame in
                     guard Int(index) < imports.count else { return false }
-                    return toolbox.dispatch(imports[Int(index)], frame: &frame, writeGuest: { address, bytes in
+                    return toolbox.dispatch(imports[Int(index)], frame: &frame, readGuest: { address, count in
+                        guard count >= 0,
+                              regions.contains(where: { $0.contains(address, byteCount: count) }) else { return nil }
+                        let bytes = UnsafeRawBufferPointer(start: memory.hostPointer(for: address), count: count)
+                        return Array(bytes)
+                    }, writeGuest: { address, bytes in
                         guard regions.contains(where: { $0.writable && $0.contains(address, byteCount: bytes.count) }) else {
                             return false
                         }
@@ -194,7 +199,7 @@ enum BlueBoxRunner {
             )
         }
         if let fault = toolbox.guestMemoryFault {
-            execution.stop = .memoryFault(address: fault, write: true)
+            execution.stop = .memoryFault(address: fault.address, write: fault.write)
         }
         return BlueBoxRunReport(execution: execution, codeAddress: code, toc: toc,
                                 initialStackPointer: stackPointer,

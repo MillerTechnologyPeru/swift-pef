@@ -12,7 +12,7 @@ enum PPCExecutionStop: Equatable {
 
 struct PPCExecutionReport {
     let result: PPC32StepResult
-    let stop: PPCExecutionStop
+    var stop: PPCExecutionStop
     let pc: UInt32
     let lr: UInt32
     let stackPointer: UInt32

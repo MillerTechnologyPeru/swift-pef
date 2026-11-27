@@ -78,6 +78,9 @@ enum BlueBoxRunner {
         applicationFile: GuestFile? = nil,
         entry: BlueBoxEntry = .main, maxInstructions: Int = 100_000
     ) throws -> BlueBoxRunReport {
+        #if arch(powerpc)
+        throw BlueBoxError.nativeExecutionUnavailable
+        #else
         let container = try PEFContainer(bytes: bytes)
         guard let loader = try container.loaderSection() else { throw BlueBoxError.missingEntry(entry.rawValue) }
         let memory = try GuestAddressSpace()
@@ -312,5 +315,6 @@ enum BlueBoxRunner {
                                 sectionCount: allocations.count, imports: imports,
                                 handledImportCount: toolbox.handledImportCount,
                                 pendingAlert: toolbox.pendingAlert, framebufferPPM: snapshot, executionEntry: executionEntry)
+        #endif
     }
 }

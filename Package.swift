@@ -3,6 +3,9 @@ import PackageDescription
 
 // PEFKit includes fragment preparation, format parsers, relocation, and resource-fork readers.
 // BlueBox maps prepared sections into its emulated guest address space and runs bounded calls.
+// Its tested Toolbox dispatcher bridges supported InterfaceLib imports to per-run Graphite state.
+// QuickDraw globals and the monochrome screen use guest-owned backing memory.
+// The initial Window Manager port also exposes packed guest records and region handles.
 // PEFKit is Foundation-free. CResourceIO isolates platform xattr calls from the format parsers.
 // Embedded Swift is not enabled or validated yet; it also needs BinaryParsingEmbedded.
 

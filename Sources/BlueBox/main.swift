@@ -51,6 +51,7 @@ do {
     }
     print("Loaded \(report.sectionCount) sections; entry=\(hex(report.codeAddress)), toc=\(hex(report.toc)), sp=\(hex(report.initialStackPointer))")
     print(report.diagnostic)
+    print("Serviced \(report.handledImportCount) Toolbox imports")
     switch report.execution.stop {
     case .returned: exit(0)
     case .instructionLimit: exit(124)

@@ -48,9 +48,12 @@ let package = Package(
         .package(url: "https://github.com/apple/swift-binary-parsing.git", .upToNextMinor(from: "0.0.4"))
     ],
     targets: [
+        .target(name: "CMORATestSupport", path: "Tests/CMORATestSupport", publicHeadersPath: "include"),
+        .testTarget(name: "CMORATests", dependencies: ["CMORA", "CMORATestSupport"]),
         .target(
             name: "CMORA",
-            publicHeadersPath: "include"
+            publicHeadersPath: "include",
+            linkerSettings: [.linkedLibrary("pthread", .when(platforms: [.linux]))]
         ),
         .target(
             name: "CMusashi",

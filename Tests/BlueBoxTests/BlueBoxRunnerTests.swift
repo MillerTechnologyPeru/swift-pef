@@ -70,6 +70,27 @@ import Graphite
         return bytes + loader
     }
 
+    @Test func guestCreatesPopulatesAndCountsAnAppleEventList() throws {
+        func invoke(_ offset: UInt32) -> [UInt32] {
+            [0x81820000 | offset, 0x800C0000, 0x804C0004, 0x7C0903A6, 0x4E800421]
+        }
+        var code: [UInt32] = [0x7FC802A6, 0x7C5F1378,
+                             0x38600000, 0x38800000, 0x38A00000, 0x38C20028]
+        code += invoke(4) // AECreateList(NULL, 0, false, &list)
+        code += [0x7FE2FB78, 0x38620028, 0x38800000, 0x3CA05445, 0x60A55854,
+                 0x7C461378, 0x38E00004]
+        code += invoke(8) // AEPutPtr(&list, 0, 'TEXT', toc, 4)
+        code += [0x7FE2FB78, 0x38620028, 0x38820030]
+        code += invoke(12) // AECountItems(&list, &count)
+        code += [0x7FE2FB78, 0x80620030, 0x7FC803A6, 0x4E800020]
+        let bytes = executable(code, imported: true, importedSymbol: "AECreateList",
+                               secondaryImport: "AEPutPtr", additionalImports: ["AECountItems"])
+        let report = try bytes.withUnsafeBytes { try BlueBoxRunner.run(bytes: $0) }
+        #expect(report.execution.stop == .returned)
+        #expect(report.execution.r3 == 1)
+        #expect(report.handledImportCount == 3)
+    }
+
     @Test func guestReceivesLaunchEventAndCallsToolboxFromItsHandler() throws {
         func invoke(_ offset: UInt32) -> [UInt32] {
             [0x81820000 | offset, 0x800C0000, 0x804C0004, 0x7C0903A6, 0x4E800421]

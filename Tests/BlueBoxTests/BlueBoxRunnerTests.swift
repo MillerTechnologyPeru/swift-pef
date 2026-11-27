@@ -13,12 +13,14 @@ import Testing
     }
 
     /// Code + data/TOC/TVector + loader, with real section and import relocation records.
-    private func executable(_ instructions: [UInt32], imported: Bool = false, entryOffset: UInt32 = 0) -> [UInt8] {
+    private func executable(_ instructions: [UInt32], imported: Bool = false,
+                            importedSymbol: String = "UnknownToolboxCall", importedClass: UInt32 = 2,
+                            entryOffset: UInt32 = 0) -> [UInt8] {
         let code = instructions.flatMap(be32)
         let dataOffset = (128 + code.count + 15) / 16 * 16
-        let loaderOffset = dataOffset + 16
+        let loaderOffset = dataOffset + 256
         let relocations: [UInt16] = imported ? [0x4600, 0x8003, 0x6000] : [0x4600]
-        let strings = imported ? Array("InterfaceLib\0TickCount\0".utf8) : []
+        let strings = imported ? Array("InterfaceLib\0\(importedSymbol)\0".utf8) : []
         let relocationOffset = imported ? 96 : 68
         let stringsOffset = relocationOffset + relocations.count * 2
         let hashOffset = (stringsOffset + strings.count + 3) / 4 * 4
@@ -30,7 +32,7 @@ import Testing
         }
         if imported {
             loader += be32(0) + be32(0) + be32(0) + be32(1) + be32(0) + [0, 0, 0, 0]
-            loader += be32(0x0200000D)
+            loader += be32(importedClass << 24 | 13)
         }
         loader += be16(1) + be16(0) + be32(UInt32(relocations.count)) + be32(0)
         loader += relocations.flatMap(be16) + strings
@@ -44,12 +46,13 @@ import Testing
                 + be32(UInt32(total)) + be32(UInt32(offset)) + [kind, 1, 4, 0]
         }
         bytes += section(code.count, 128, 0)
-        bytes += section(16, dataOffset, 1)
+        bytes += section(256, dataOffset, 1)
         bytes += section(loader.count, loaderOffset, 4)
         while bytes.count < 128 { bytes.append(0) }
         bytes += code
         while bytes.count < dataOffset { bytes.append(0) }
         bytes += be32(entryOffset) + be32(8) + be32(42) + be32(0)
+        while bytes.count < loaderOffset { bytes.append(0) }
         return bytes + loader
     }
 
@@ -87,8 +90,21 @@ import Testing
         let bytes = executable([0x81820004, 0x800C0000, 0x804C0004, 0x7C0903A6, 0x4E800421], imported: true)
         let report = try bytes.withUnsafeBytes { try BlueBoxRunner.run(bytes: $0) }
         #expect(report.execution.stop == .unsupportedImport(0))
-        #expect(report.diagnostic.contains("InterfaceLib:TickCount"))
+        #expect(report.diagnostic.contains("InterfaceLib:UnknownToolboxCall"))
         #expect(report.execution.instructions == 5)
+        #expect(report.handledImportCount == 0)
+    }
+
+    @Test func callsToolboxThroughTVectorAndReturnsToGuest() throws {
+        // Preserve the host-return LR across bctrl, load the import TVector, call, restore LR and return.
+        let code: [UInt32] = [0x7FC802A6, 0x81820004, 0x800C0000, 0x804C0004,
+                              0x7C0903A6, 0x4E800421, 0x7FC803A6, 0x4E800020]
+        let bytes = executable(code, imported: true, importedSymbol: "GetDblTime")
+        let report = try bytes.withUnsafeBytes { try BlueBoxRunner.run(bytes: $0) }
+        #expect(report.execution.stop == .returned)
+        #expect(report.execution.r3 == 30)
+        #expect(report.execution.instructions == 8)
+        #expect(report.handledImportCount == 1)
     }
 
     @Test func diagnosesUnmappedReadAndProtectedWrite() throws {
@@ -97,6 +113,65 @@ import Testing
         let write = try executable([0x3C800100, 0x90640000]).withUnsafeBytes { try BlueBoxRunner.run(bytes: $0) }
         #expect(write.execution.stop == .memoryFault(address: 0x01000000, write: true))
         #expect(write.execution.pc == write.codeAddress + 4)
+    }
+
+    @Test func initializesApplicationOwnedQuickDrawGlobals() throws {
+        // r3=&thePort within this PEF's data, r31=&randSeed, then call InitGraf and read randSeed.
+        let code: [UInt32] = [0x7FC802A6, 0x386200CA, 0x3BE3FF82,
+                              0x81820004, 0x800C0000, 0x804C0004, 0x7C0903A6, 0x4E800421,
+                              0x807F0000, 0x7FC803A6, 0x4E800020]
+        let report = try executable(code, imported: true, importedSymbol: "InitGraf").withUnsafeBytes {
+            try BlueBoxRunner.run(bytes: $0)
+        }
+        #expect(report.execution.stop == .returned)
+        #expect(report.execution.r3 == 1)
+        #expect(report.handledImportCount == 1)
+    }
+
+    @Test func resolvesImportedQuickDrawData() throws {
+        let report = try executable([0x80620004, 0x4E800020], imported: true,
+                                    importedSymbol: "qd", importedClass: 1).withUnsafeBytes {
+            try BlueBoxRunner.run(bytes: $0)
+        }
+        #expect(report.execution.stop == .returned)
+        #expect(report.execution.r3 == GuestQuickDrawGlobals.address)
+    }
+
+    @Test func guestReadsPascalFontNameWrittenByGraphiteBridge() throws {
+        // Save LR, put a guest data buffer in r4, request system family 0, then read its Pascal length.
+        let code: [UInt32] = [0x7FC802A6, 0x3BE20028, 0x389F0000, 0x38600000,
+                              0x81820004, 0x800C0000, 0x804C0004, 0x7C0903A6, 0x4E800421,
+                              0x887F0000, 0x7FC803A6, 0x4E800020]
+        let report = try executable(code, imported: true, importedSymbol: "GetFontName").withUnsafeBytes {
+            try BlueBoxRunner.run(bytes: $0)
+        }
+        #expect(report.execution.stop == .returned)
+        #expect(report.execution.r3 == 7)
+        #expect(report.handledImportCount == 1)
+    }
+
+    @Test func guestDereferencesWindowManagerRegionHandle() throws {
+        // Call InitWindows, follow WMgrPort.visRgn's master pointer, read the rectangular region size.
+        let code: [UInt32] = [0x7FC802A6, 0x81820004, 0x800C0000, 0x804C0004,
+                              0x7C0903A6, 0x4E800421, 0x3C802200, 0x80840018,
+                              0x80840000, 0xA0640000, 0x7FC803A6, 0x4E800020]
+        let report = try executable(code, imported: true, importedSymbol: "InitWindows").withUnsafeBytes {
+            try BlueBoxRunner.run(bytes: $0)
+        }
+        #expect(report.execution.stop == .returned)
+        #expect(report.execution.r3 == 10)
+        #expect(report.handledImportCount == 1)
+    }
+
+    @Test func initGrafRejectsReadOnlyGuestDestination() throws {
+        // Pass thePort=code+126, making InitGraf's first write target the code section.
+        let code: [UInt32] = [0x3C600100, 0x3863007E,
+                              0x81820004, 0x800C0000, 0x804C0004, 0x7C0903A6, 0x4E800421]
+        let report = try executable(code, imported: true, importedSymbol: "InitGraf").withUnsafeBytes {
+            try BlueBoxRunner.run(bytes: $0)
+        }
+        #expect(report.execution.stop == .memoryFault(address: 0x01000000, write: true))
+        #expect(report.handledImportCount == 0)
     }
 
     @Test func rejectsUnalignedEntryAndMissingInit() throws {
@@ -118,5 +193,24 @@ import Testing
         let report = try data.withUnsafeBytes { try BlueBoxRunner.run(bytes: $0, maxInstructions: 1000) }
         #expect(report.execution.instructions <= 1000)
         print("Real execution: Educate Quotes: \(report.diagnostic)")
+    }
+
+    @Test func macGzipAdvancesPastQuickDrawInitialization() throws {
+        let root = ProcessInfo.processInfo.environment["PEF_FIXTURES_DIR"].map {
+            URL(fileURLWithPath: $0, isDirectory: true)
+        } ?? URL(fileURLWithPath: #filePath).deletingLastPathComponent()
+            .deletingLastPathComponent().deletingLastPathComponent().appendingPathComponent(".build/fixtures")
+        let path = root.appendingPathComponent("extracted/macgzip/MacGzip/MacGzip")
+        guard FileManager.default.fileExists(atPath: path.path) else { return }
+        let data = try Data(contentsOf: path)
+        let report = try data.withUnsafeBytes { try BlueBoxRunner.run(bytes: $0, maxInstructions: 1000) }
+        guard case .unsupportedImport(let index) = report.execution.stop else {
+            Issue.record("Expected next unsupported import; got \(report.diagnostic)")
+            return
+        }
+        #expect(report.imports[Int(index)].library == "InterfaceLib")
+        #expect(report.imports[Int(index)].symbol == "InitMenus")
+        #expect(report.handledImportCount == 4)
+        #expect(report.execution.instructions == 106)
     }
 }

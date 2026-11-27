@@ -25,6 +25,41 @@ struct PPCExecutionReport {
 }
 
 enum EmulatedPPCBackend {
+    enum CallbackError: Error, Equatable {
+        case invalidVector
+        case invalidStack
+        case tooManyArguments
+    }
+
+    /// Invokes a guest TVector on a dedicated stack frame. This does not decode Mixed Mode UPPs.
+    static func callVector(
+        at vector: UInt32, arguments: [UInt32], stackPointer: UInt32,
+        in memory: borrowing GuestAddressSpace, maxInstructions: Int,
+        memoryRegions: UnsafeBufferPointer<PPC32MemoryRegion>,
+        dispatchImport: (UInt32, inout MORAInvocationFrame) -> Bool
+    ) throws(CallbackError) -> PPCExecutionReport {
+        guard arguments.count <= 8 else { throw .tooManyArguments }
+        guard vector != 0, vector & 3 == 0,
+              memoryRegions.contains(where: { $0.contains(vector, byteCount: 8) }) else {
+            throw .invalidVector
+        }
+        guard stackPointer != 0, stackPointer & 15 == 0,
+              memoryRegions.contains(where: { $0.writable && $0.contains(stackPointer, byteCount: 64) }) else {
+            throw .invalidStack
+        }
+        let code = memory.readBigEndian(UInt32.self, at: vector)
+        let toc = memory.readBigEndian(UInt32.self, at: vector + 4)
+        // Reserve the linkage and register argument areas without inheriting host stack state.
+        memory.hostPointer(for: stackPointer).initializeMemory(as: UInt8.self, repeating: 0, count: 64)
+        memory.writeBigEndian(PPC32State.returnSentinel, at: stackPointer + 8)
+        memory.writeBigEndian(toc, at: stackPointer + 20)
+        return call(codeAddress: code, toc: toc, stackPointer: stackPointer,
+                    in: memory, maxInstructions: maxInstructions, memoryRegions: memoryRegions,
+                    configure: { state in
+                        for (index, argument) in arguments.enumerated() { state.gpr[index + 3] = argument }
+                    }, dispatchImport: dispatchImport)
+    }
+
     /// Borrows the mapping and optional memory regions for the complete invocation.
     static func call(
         codeAddress: UInt32,

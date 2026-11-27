@@ -50,6 +50,19 @@ struct ToolboxRuntime {
             return false
         }
         switch symbol.symbol {
+        case "BlockMove", "BlockMoveData", "BlockMoveUncached", "BlockMoveDataUncached":
+            guard let readGuest, let writeGuest else { return false }
+            let arguments = withUnsafeBytes(of: frame.gpr) { bytes in
+                let registers = bytes.bindMemory(to: UInt32.self)
+                return (registers[0], registers[1], registers[2])
+            }
+            do {
+                try GuestBlockMove.copy(source: arguments.0, destination: arguments.1, count: arguments.2,
+                                        read: readGuest, write: writeGuest)
+            } catch {
+                guestMemoryFault = error
+                return false
+            }
         case "p2cstr", "P2CStr", "c2pstr", "C2PStr",
              "p2cstrcpy", "c2pstrcpy", "CopyPascalStringToC", "CopyCStringToPascal":
             guard let readGuest, let writeGuest else { return false }

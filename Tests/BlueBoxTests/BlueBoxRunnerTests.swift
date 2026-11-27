@@ -130,7 +130,7 @@ import Graphite
         #expect(report.handledImportCount == 2)
     }
 
-    @Test func guestOpensReadsAndClosesAMountedFile() throws {
+    @Test(arguments: [false, true]) func guestOpensReadsAndClosesAMountedFile(parameterBlock: Bool) throws {
         func invoke(_ offset: UInt32) -> [UInt32] {
             [0x81820000 | offset, 0x800C0000, 0x804C0004, 0x7C0903A6, 0x4E800421]
         }
@@ -138,13 +138,20 @@ import Graphite
         let spec = FileSpec(volume: -100, parent: .root, name: name)
         var code: [UInt32] = [0x7FC802A6, 0x7C5F1378, 0x38620038, 0x38800001, 0x38A20088]
         code += invoke(4) // FSpOpenDF(&spec, fsRdPerm, &refNum)
-        code += [0x7FE2FB78, 0xA0620088, 0x38000006, 0x9002008C, 0x3882008C, 0x38A20090]
-        code += invoke(8) // FSRead(refNum, &count, buffer), requesting more than EOF
+        if parameterBlock {
+            // IOParam at data+160: reference at +24, buffer +32, request +36, mode +44, offset +46.
+            code += [0x7FE2FB78, 0xA0020088, 0xB00200B0, 0x38020090, 0x900200B8,
+                     0x38000006, 0x900200BC, 0x38000001, 0xB00200C4,
+                     0x38000000, 0xB00200C6, 0xB00200C8, 0x38620098]
+        } else {
+            code += [0x7FE2FB78, 0xA0620088, 0x38000006, 0x9002008C, 0x3882008C, 0x38A20090]
+        }
+        code += invoke(8) // Request six bytes from a four-byte fork.
         code += [0x7FE2FB78, 0xA0620088]
         code += invoke(12) // FSClose(refNum)
         code += [0x7FE2FB78, 0x80620090, 0x7FC803A6, 0x4E800020]
         let bytes = executable(code, imported: true, importedSymbol: "FSpOpenDF",
-                               secondaryImport: "FSRead", additionalImports: ["FSClose"], fileSpec: spec)
+                               secondaryImport: parameterBlock ? "PBReadSync" : "FSRead", additionalImports: ["FSClose"], fileSpec: spec)
         let report = try bytes.withUnsafeBytes {
             try BlueBoxRunner.run(bytes: $0, files: [GuestFile(name: name, dataFork: [1, 2, 3, 4])])
         }

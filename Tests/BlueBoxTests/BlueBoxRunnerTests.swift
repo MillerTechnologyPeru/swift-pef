@@ -292,6 +292,26 @@ import Graphite
         #expect(report.handledImportCount == 1)
     }
 
+    @Test func guestBlockMoveHandlesOverlapAndProtectedDestination() throws {
+        for protected in [false, true] {
+            let code: [UInt32] = [0x7FC802A6, 0x38620028, 0x3CC01234, 0x60C65678, 0x90C30000,
+                                  0x3BE30001, protected ? 0x3C800100 : 0x389F0000, 0x38A00004,
+                                  0x81820004, 0x800C0000, 0x804C0004, 0x7C0903A6, 0x4E800421,
+                                  0x807F0000, 0x7FC803A6, 0x4E800020]
+            let report = try executable(code, imported: true, importedSymbol: "BlockMoveData").withUnsafeBytes {
+                try BlueBoxRunner.run(bytes: $0)
+            }
+            if protected {
+                #expect(report.execution.stop == .memoryFault(address: 0x01000000, write: true))
+                #expect(report.handledImportCount == 0)
+            } else {
+                #expect(report.execution.stop == .returned)
+                #expect(report.execution.r3 == 0x12345678)
+                #expect(report.handledImportCount == 1)
+            }
+        }
+    }
+
     @Test func initGrafRejectsReadOnlyGuestDestination() throws {
         // Pass thePort=code+126, making InitGraf's first write target the code section.
         let code: [UInt32] = [0x3C600100, 0x3863007E,
@@ -334,15 +354,15 @@ import Graphite
         let app = try BlueBoxApplication.load(path: path.path)
         #expect(app.resourceFork != nil)
         let report = try app.dataFork.withUnsafeBytes {
-            try BlueBoxRunner.run(bytes: $0, resourceFork: app.resourceFork, maxInstructions: 1000)
+            try BlueBoxRunner.run(bytes: $0, resourceFork: app.resourceFork, maxInstructions: 10000)
         }
         guard case .unsupportedImport(let index) = report.execution.stop else {
             Issue.record("Expected next unsupported import; got \(report.diagnostic)")
             return
         }
         #expect(report.imports[Int(index)].library == "InterfaceLib")
-        #expect(report.imports[Int(index)].symbol == "BlockMoveData")
-        #expect(report.handledImportCount == 14)
-        #expect(report.execution.instructions == 801)
+        #expect(report.imports[Int(index)].symbol == "GetResource")
+        #expect(report.handledImportCount == 15)
+        #expect(report.execution.instructions == 1426)
     }
 }

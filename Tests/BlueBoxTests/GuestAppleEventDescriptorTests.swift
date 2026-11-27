@@ -169,4 +169,66 @@ import Testing
         #expect(memory.read(0x200, 8) == Array("null".utf8) + [0, 0, 0, 0])
         #expect(runtime.handledImportCount == 0)
     }
+
+    @Test func listsCopyItemsPreserveIdentityAndUseOneBasedIndices() {
+        var runtime = ToolboxRuntime()
+        let memory = Memory()
+        #expect(call("AECreateList", [0xFFFFFFFF, 0, 0xFFFFFF00, 0x100], &runtime, memory) == 0)
+        #expect(memory.word(0x100) == 0x6C697374)
+        let handle = memory.word(0x104)
+        _ = memory.write(0x200, [1, 2, 3])
+        #expect(call("AECreateDesc", [0x54455854, 0x200, 3, 0x108], &runtime, memory) == 0)
+        #expect(call("AEPutDesc", [0x100, 0, 0x108], &runtime, memory) == 0)
+        #expect(call("AEDisposeDesc", [0x108], &runtime, memory) == 0)
+        _ = memory.write(0x200, [4, 5])
+        #expect(call("AEPutPtr", [0x100, 2, 0x54455854, 0x200, 2], &runtime, memory) == 0)
+        #expect(memory.word(0x104) == handle)
+        #expect(call("AECountItems", [0x100, 0x220], &runtime, memory) == 0)
+        #expect(memory.word(0x220) == 2)
+        #expect(call("AEGetNthDesc", [0x100, 1, 0x2A2A2A2A, 0x224, 0x108], &runtime, memory) == 0)
+        #expect(memory.word(0x224) == 0)
+        #expect(call("AEGetDescData", [0x108, 0x230, 3], &runtime, memory) == 0)
+        #expect(memory.read(0x230, 3) == [1, 2, 3])
+        #expect(call("AEDuplicateDesc", [0x100, 0x110], &runtime, memory) == 0)
+        #expect(call("AEDeleteItem", [0x100, 1], &runtime, memory) == 0)
+        #expect(call("AECountItems", [0x110, 0x220], &runtime, memory) == 0)
+        #expect(memory.word(0x220) == 2)
+        #expect(call("AECountItems", [0x100, 0x220], &runtime, memory) == 0)
+        #expect(memory.word(0x220) == 1)
+        #expect(call("AEPutPtr", [0x100, 1, 0x54455854, 0x200, 2], &runtime, memory) == 0)
+        #expect(call("AECountItems", [0x100, 0x220], &runtime, memory) == 0)
+        #expect(memory.word(0x220) == 1)
+    }
+
+    @Test func invalidListRequestsReturnErrorsWithoutChangingContents() {
+        var runtime = ToolboxRuntime()
+        let memory = Memory()
+        #expect(call("AECreateList", [0, 0, 1, 0x100], &runtime, memory) == 0)
+        #expect(memory.word(0x100) == 0x7265636F)
+        #expect(call("AECountItems", [0x100, 0x200], &runtime, memory) == 0)
+        #expect(memory.word(0x200) == 0)
+        #expect(call("AEDisposeDesc", [0x100], &runtime, memory) == 0)
+        #expect(Int32(bitPattern: call("AECreateList", [0, 1, 0, 0x100], &runtime, memory)) == -4)
+        #expect(memory.word(0x100) == 0x6E756C6C)
+        #expect(Int32(bitPattern: call("AECreateList", [0, 0xFFFFFFFF, 0, 0x100], &runtime, memory)) == -50)
+        #expect(call("AECreateList", [0, 0, 0, 0x100], &runtime, memory) == 0)
+        for index: UInt32 in [0, 1, 0xFFFFFFFF] {
+            #expect(Int32(bitPattern: call("AEDeleteItem", [0x100, index], &runtime, memory)) == -1719)
+        }
+        #expect(Int32(bitPattern: call("AEPutPtr", [0x100, 2, 0x54455854, 0xFFFFFFFF, 0], &runtime, memory)) == -1719)
+        #expect(Int32(bitPattern: call("AEGetNthDesc", [0x100, 1, 0x2A2A2A2A, 0, 0x108], &runtime, memory)) == -1719)
+        #expect(call("AECountItems", [0x100, 0x200], &runtime, memory) == 0)
+        #expect(memory.word(0x200) == 0)
+    }
+
+    @Test func nestedListLimitRejectsMutationAndRetainsTheLastValidTree() {
+        var runtime = ToolboxRuntime()
+        let memory = Memory()
+        #expect(call("AECreateList", [0, 0, 0, 0x100], &runtime, memory) == 0)
+        for _ in 0..<32 { #expect(call("AEPutDesc", [0x100, 1, 0x100], &runtime, memory) == 0) }
+        #expect(Int32(bitPattern: call("AEPutDesc", [0x100, 1, 0x100], &runtime, memory)) == -108)
+        #expect(call("AECountItems", [0x100, 0x200], &runtime, memory) == 0)
+        #expect(memory.word(0x200) == 1)
+        #expect(call("AEDisposeDesc", [0x100], &runtime, memory) == 0)
+    }
 }

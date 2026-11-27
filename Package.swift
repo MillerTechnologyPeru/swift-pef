@@ -20,6 +20,7 @@ import PackageDescription
 // Mixed Mode routine descriptors wrap prepared guest PowerPC transition vectors.
 // Tested File Manager calls expose explicitly mounted read-only fork snapshots.
 // CFM initialization blocks precede main entry execution in the shared guest context.
+// Tested synchronous parameter-block reads preserve packed IOParam fields and checked guest output.
 // PEFKit is Foundation-free. CResourceIO isolates platform xattr calls from the format parsers.
 // Embedded Swift is not enabled or validated yet; it also needs BinaryParsingEmbedded.
 

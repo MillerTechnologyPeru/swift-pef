@@ -52,7 +52,7 @@ Reference specifications:
 Validation includes synthetic format fixtures, native macOS xattr tests, and 30 local real-file
 cases: preparation/export lookup/entry-vector relocation for 15 PowerPC PEF payloads and resource
 parsing for their 15 AppleDouble sidecars. Payloads include MacGzip 1.1.3, MacZip 1.06, BBEdit Lite's
-Classic and Carbon variants, and eleven BBEdit plug-ins. The full suite passes 229 cases.
+Classic and Carbon variants, and eleven BBEdit plug-ins. The full suite passes 236 cases.
 Real-file tests use placeholder import addresses and never execute guest code. They use
 `.build/fixtures` by default, allow `PEF_FIXTURES_DIR` to override the directory, and are disabled
 when `manifest.json` is absent. Download provenance and hashes remain in the local manifest.
@@ -162,8 +162,8 @@ call from the handler, negative OSErr, looping/faulting callbacks, descriptor ow
 conversion, rollback, missing attributes, and invalid guest reads. Validation used Graphite
 master at 7ab800a. MacGzip still reaches its compatibility alert at 1,513 instructions/19 imports;
 MacZip stops at InitMenus (90 instructions), and BBEdit Lite passes AECreateList and
-NewRoutineDescriptor, FSpOpenDF, and PBReadSync before stopping at FindSymbol (1,190 instructions,
-17 serviced imports), after its fragment initializer populates the application FSSpec.
+NewRoutineDescriptor, FSpOpenDF, PBReadSync, and FindSymbol before stopping at EqualString
+(12,494 instructions, 20 serviced imports), after its fragment initializer populates the application FSSpec.
 AECreateList creates unfactored lists and empty records. AEPutDesc/AEPutPtr, AECountItems,
 AEGetNthDesc, and AEDeleteItem bridge list operations through Graphite with signed one-based
 indices and index-zero append. Updates preserve guest handle identity; retrieved/duplicated
@@ -214,6 +214,15 @@ fragment initialization remain pending. Tests cover both locator kinds, ordering
 heap state, error propagation, and limits spanning init/main. Tracing confirmed BBEdit's
 initializer copies the locator FSSpec into the globals used by its startup data-fork open.
 The block layout follows Apple's [Code Fragment Manager summary](https://dev.os9.ca/techpubs/mac/PPCSoftware/PPCSoftware-66.html).
+FindSymbol and CountSymbols operate on the prepared application's connection ID 1, shared
+with its CFM initialization block. Export metadata owns the original name bytes and resolves
+regular sections, absolute exports and re-exported imports through PEFKit. Section-relative
+exports are checked against instantiated section bounds before execution. FindSymbol writes
+a big-endian address and a one-byte class only on a match; invalid connections return -2801
+and missing exact-byte names return -2802. Tests cover lookup/counting, byte widths, missing
+connections/symbols, memory faults, invalid section offsets, and interpreted lookups for all
+three address forms. GetIndSymbol, library loading and additional connections remain pending.
+The lookup contract follows Apple's [FindSymbol reference](https://dev.os9.ca/techpubs/mac/PPCSoftware/PPCSoftware-58.html).
 The record layout and event interfaces follow Apple's
 [Introduction to Apple Events](https://developer.apple.com/library/archive/documentation/mac/pdf/Interapplication_Communication/Intro_to_Apple_Events.pdf)
 and [Responding to Apple Events](https://dev.os9.ca/techpubs/mac/pdf/Interapplication_Communication/Responding_to_AEs.pdf).

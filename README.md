@@ -2,8 +2,23 @@
 
 A native 32-bit big-endian PowerPC (`ppc32`) High-Level Emulation (HLE) loader and Code Fragment Manager (CFM) runtime written in Swift. `swift-pef` loads Classic Mac OS 9 Preferred Executable Format (`PEF`) binaries and binds their imported Toolbox and Carbon symbols directly to **`PureSwift/Graphite`** on Linux (`powerpc-unknown-linux-gnu`).
 
+## Implementation status
+
+PEFKit implements container/section validation and unpacking, all standard relocation opcode
+families, import/export tables and CFM hash lookup, export address resolution, resource maps,
+AppleDouble v1/v2, MacBinary I/II/III (including header CRC), and resource-fork xattrs.
+The format parsers are Foundation-free and use caller-owned buffers. A small CResourceIO
+target wraps macOS/Linux xattr system calls.
+
+The library also prepares entire fragments in caller-owned section memory and resolves
+imports through host callbacks, including weak imports. The test suite includes preparation
+with nonzero preferred addresses, import ownership/weakness checks, malformed/truncated inputs, archive fixtures, and native macOS xattr reads.
+Real CodeWarrior/MPW application compatibility, Linux/ppc32 builds, and Embedded Swift builds
+remain unverified. BlueBox's command-line entry point is still a stub; the runtime features
+below describe the intended architecture.
+
 ## Targets
-- **`PEFKit`**: Embedded-Swift compatible (`-enable-experimental-feature Embedded`) pure-Swift library implementing the `Joy!peff` container parser, `pidata` pattern-initialized data decompressor, 16-bit loader relocation VM, `PEFComputeHashWord` symbol lookup, and Resource Fork readers (AppleDouble `._*`, MacBinary `.bin`, Linux `xattr`).
+- **`PEFKit`**: Foundation-free Swift library (Embedded Swift validation pending) implementing the `Joy!peff` container parser, `pidata` pattern-initialized data decompressor, 16-bit loader relocation VM, `PEFComputeHashWord` symbol lookup, and Resource Fork readers (AppleDouble `._*`, MacBinary `.bin`, Linux `xattr`).
 - **`BlueBox`**: Classic Mac OS 9 HLE runner executable bridging the Mac OS Runtime for Architectures (MORA) ABI and `TVector`s to `PureSwift/Graphite`, with Musashi 68k UPP fallback (`kM68kISA`), ALSA big-endian audio, and dual presentation backends for **QEMU `mac99`** (software/SDL) and **Apple iBook G4** (Mesa `r200`/`r300` hardware OpenGL).
 
 ## Documentation Included

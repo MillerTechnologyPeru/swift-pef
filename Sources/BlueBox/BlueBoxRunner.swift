@@ -189,6 +189,19 @@ enum BlueBoxRunner {
             EmulatedPPCBackend.call(
                 codeAddress: code, toc: toc, stackPointer: stackPointer,
                 in: memory, maxInstructions: maxInstructions, memoryRegions: regions,
+                takeCallback: { toolbox.takeAppleEventCallback() },
+                completeCallback: {
+                    toolbox.completeAppleEventCallback(read: { address, count in
+                        guard count >= 0, regions.contains(where: { $0.contains(address, byteCount: count) }) else { return nil }
+                        return Array(UnsafeRawBufferPointer(start: memory.hostPointer(for: address), count: count))
+                    }, write: { address, bytes in
+                        guard regions.contains(where: { $0.writable && $0.contains(address, byteCount: bytes.count) }) else { return false }
+                        bytes.withUnsafeBytes { source in
+                            if let pointer = source.baseAddress { memory.hostPointer(for: address).copyMemory(from: pointer, byteCount: source.count) }
+                        }
+                        return true
+                    })
+                },
                 dispatchImport: { index, frame in
                     guard Int(index) < imports.count else { return false }
                     return toolbox.dispatch(imports[Int(index)], frame: &frame, readGuest: { address, count in

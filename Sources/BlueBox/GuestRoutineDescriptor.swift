@@ -12,7 +12,7 @@ enum GuestRoutineDescriptor {
     }
 
     static func resolve(_ pointer: UInt32, expectedProcInfo: UInt32?,
-                        read: (UInt32, Int) -> [UInt8]?) throws(EmulatedPPCBackend.CallbackError) -> UInt32 {
+                        read: (UInt32, Int) -> [UInt8]?) throws(GuestCallbackError) -> UInt32 {
         guard pointer != 0, pointer & 1 == 0, let prefix = read(pointer, 2), prefix.count == 2 else {
             throw .invalidVector
         }

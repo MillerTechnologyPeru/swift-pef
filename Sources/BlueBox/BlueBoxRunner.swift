@@ -169,6 +169,9 @@ enum BlueBoxRunner {
         try memory.commit(at: GuestWindowManager.address, byteCount: Int(GuestWindowManager.byteCount))
         regions.append(PPC32MemoryRegion(address: GuestWindowManager.address,
                                         byteCount: GuestWindowManager.byteCount, writable: true))
+        try memory.commit(at: GuestTextEdit.scrapHandle, byteCount: Int(GuestTextEdit.byteCount))
+        regions.append(PPC32MemoryRegion(address: GuestTextEdit.scrapHandle,
+                                        byteCount: GuestTextEdit.byteCount, writable: true))
         var toolbox = ToolboxRuntime(screenPixels: memory.hostPointer(for: GuestQuickDrawGlobals.screenAddress))
         var execution = regions.withUnsafeBufferPointer { regions in
             EmulatedPPCBackend.call(

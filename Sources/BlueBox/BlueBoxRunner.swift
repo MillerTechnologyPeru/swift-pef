@@ -20,6 +20,7 @@ struct BlueBoxRunReport {
     let initialStackPointer: UInt32
     let sectionCount: Int
     let imports: [GuestImport]
+    let handledImportCount: UInt64
 
     var diagnostic: String {
         let context = "pc=\(hex(execution.pc)), lr=\(hex(execution.lr)), instructions=\(execution.instructions)"
@@ -57,7 +58,7 @@ func hex(_ value: UInt32) -> String {
 }
 
 enum BlueBoxRunner {
-    /// Executes one selected PEF entry. Init/term sequencing and host Toolbox shims are separate.
+    /// Executes one selected PEF entry with per-run Toolbox state. Init/term sequencing is separate.
     static func run(
         bytes: UnsafeRawBufferPointer, entry: BlueBoxEntry = .main, maxInstructions: Int = 100_000
     ) throws -> BlueBoxRunReport {
@@ -97,6 +98,9 @@ enum BlueBoxRunner {
             regions.append(PPC32MemoryRegion(address: vectorBase, byteCount: UInt32(vectorLength), writable: false))
         }
         let vectorPointer = memory.hostPointer(for: vectorBase)
+        try memory.commit(at: GuestQuickDrawGlobals.address, byteCount: Int(GuestQuickDrawGlobals.byteCount))
+        regions.append(PPC32MemoryRegion(address: GuestQuickDrawGlobals.address,
+                                        byteCount: GuestQuickDrawGlobals.byteCount, writable: true))
         var importedAddresses = [UInt32](repeating: 0, count: importCount)
         var imports: [GuestImport] = []
         var libraryNames: [UInt32: String] = [:]
@@ -115,6 +119,10 @@ enum BlueBoxRunner {
                     imports.append(GuestImport(library: libraryNames[library] ?? "?",
                                                symbol: String(decoding: name, as: UTF8.self),
                                                symbolClass: symbolClass))
+                    if libraryNames[library] == "InterfaceLib", symbolClass == .data,
+                       String(decoding: name, as: UTF8.self) == "qd" {
+                        return GuestQuickDrawGlobals.address
+                    }
                     let trap = PPC32State.importTrapBase + index * 4
                     if symbolClass == .tVector {
                         vectorPointer.storeBytes(of: trap.bigEndian, toByteOffset: Int(index) * 8, as: UInt32.self)
@@ -155,15 +163,39 @@ enum BlueBoxRunner {
         memory.writeBigEndian(UInt32(0), at: stackPointer)
         memory.writeBigEndian(PPC32State.returnSentinel, at: stackPointer + 8)
         memory.writeBigEndian(toc, at: stackPointer + 20)
-        let execution = regions.withUnsafeBufferPointer { regions in
+        try memory.commit(at: GuestQuickDrawGlobals.screenAddress, byteCount: GuestQuickDrawGlobals.screenByteCount)
+        regions.append(PPC32MemoryRegion(address: GuestQuickDrawGlobals.screenAddress,
+                                        byteCount: UInt32(GuestQuickDrawGlobals.screenByteCount), writable: true))
+        try memory.commit(at: GuestWindowManager.address, byteCount: Int(GuestWindowManager.byteCount))
+        regions.append(PPC32MemoryRegion(address: GuestWindowManager.address,
+                                        byteCount: GuestWindowManager.byteCount, writable: true))
+        var toolbox = ToolboxRuntime(screenPixels: memory.hostPointer(for: GuestQuickDrawGlobals.screenAddress))
+        var execution = regions.withUnsafeBufferPointer { regions in
             EmulatedPPCBackend.call(
                 codeAddress: code, toc: toc, stackPointer: stackPointer,
                 in: memory, maxInstructions: maxInstructions, memoryRegions: regions,
-                dispatchImport: { _, _ in false }
+                dispatchImport: { index, frame in
+                    guard Int(index) < imports.count else { return false }
+                    return toolbox.dispatch(imports[Int(index)], frame: &frame, writeGuest: { address, bytes in
+                        guard regions.contains(where: { $0.writable && $0.contains(address, byteCount: bytes.count) }) else {
+                            return false
+                        }
+                        bytes.withUnsafeBytes { source in
+                            if let pointer = source.baseAddress {
+                                memory.hostPointer(for: address).copyMemory(from: pointer, byteCount: source.count)
+                            }
+                        }
+                        return true
+                    })
+                }
             )
+        }
+        if let fault = toolbox.guestMemoryFault {
+            execution.stop = .memoryFault(address: fault, write: true)
         }
         return BlueBoxRunReport(execution: execution, codeAddress: code, toc: toc,
                                 initialStackPointer: stackPointer,
-                                sectionCount: allocations.count, imports: imports)
+                                sectionCount: allocations.count, imports: imports,
+                                handledImportCount: toolbox.handledImportCount)
     }
 }

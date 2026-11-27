@@ -39,7 +39,7 @@ import Testing
         #expect(table.entry(eventClass: eventClass, eventID: eventID, isSystem: false) == nil)
     }
 
-    @Test func lookupIsExactAndGuestDeliveryRemainsExplicitlyUnavailable() throws {
+    @Test func lookupIsExactAndNativeClosureCannotExecuteGuestCode() throws {
         let table = GuestAppleEventHandlers()
         try table.install(eventClass: 0x2A2A2A2A, eventID: 0x2A2A2A2A, procedure: 0x1000,
                           referenceConstant: 0, isSystem: false)
@@ -48,6 +48,7 @@ import Testing
         var reply = Descriptor(type: "null")
         let event = AppleEvent(eventClass: "aevt", eventID: "oapp")
         #expect(throws: MacError.unimplemented) { try entry.handler(event, &reply) }
+        #expect(table.handler(for: event)?.procedure == 0x1000)
         #expect(GuestGestalt.makeTable()["evnt"] == nil)
     }
 

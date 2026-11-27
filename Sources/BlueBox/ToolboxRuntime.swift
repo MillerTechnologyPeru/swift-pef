@@ -11,6 +11,7 @@ struct ToolboxRuntime {
     private(set) var globalsAddress: UInt32?
     private(set) var fonts: FontRegistry?
     private(set) var windowManagerPort: Port?
+    private(set) var menuManager: HeadlessMenuManager?
 
     /// Low-level event kinds in chronological order; host input delivery is still pending.
     var pendingEventKinds: [UInt16] = []
@@ -35,6 +36,21 @@ struct ToolboxRuntime {
             return false
         }
         switch symbol.symbol {
+        case "InitMenus":
+            guard windowManagerPort != nil, let screen = quickDraw.mainDevice else { return false }
+            if let menuManager {
+                menuManager.drawMenuBar()
+            } else {
+                menuManager = HeadlessMenuManager(screen: screen)
+            }
+        case "GetMBarHeight":
+            frame.returnGPR = UInt32(HeadlessMenuManager.barHeight)
+        case "DrawMenuBar":
+            guard let menuManager else { return false }
+            menuManager.drawMenuBar()
+        case "ClearMenuBar":
+            guard let menuManager else { return false }
+            menuManager.clearMenuBar()
         case "InitWindows":
             if windowManagerPort == nil {
                 guard let writeGuest, let screen = quickDraw.mainDevice else { return false }

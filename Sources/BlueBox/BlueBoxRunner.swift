@@ -70,6 +70,7 @@ enum BlueBoxRunner {
     static func run(
         bytes: UnsafeRawBufferPointer, resourceFork: [UInt8]? = nil,
         captureFramebuffer: Bool = false,
+        files: [GuestFile] = [],
         entry: BlueBoxEntry = .main, maxInstructions: Int = 100_000
     ) throws -> BlueBoxRunReport {
         let container = try PEFContainer(bytes: bytes)
@@ -186,7 +187,7 @@ enum BlueBoxRunner {
         regions.append(PPC32MemoryRegion(address: GuestHeap.address, byteCount: GuestHeap.byteCount, writable: true))
         let resources = try resourceFork.map { try ResourceFile(bytes: $0) }
         var toolbox = ToolboxRuntime(screenPixels: memory.hostPointer(for: GuestQuickDrawGlobals.screenAddress),
-                                     resources: resources)
+                                     resources: resources, files: files)
         var execution = regions.withUnsafeBufferPointer { regions in
             EmulatedPPCBackend.call(
                 codeAddress: code, toc: toc, stackPointer: stackPointer,

@@ -52,7 +52,7 @@ Reference specifications:
 Validation includes synthetic format fixtures, native macOS xattr tests, and 30 local real-file
 cases: preparation/export lookup/entry-vector relocation for 15 PowerPC PEF payloads and resource
 parsing for their 15 AppleDouble sidecars. Payloads include MacGzip 1.1.3, MacZip 1.06, BBEdit Lite's
-Classic and Carbon variants, and eleven BBEdit plug-ins. The full suite passes 219 cases.
+Classic and Carbon variants, and eleven BBEdit plug-ins. The full suite passes 223 cases.
 Real-file tests use placeholder import addresses and never execute guest code. They use
 `.build/fixtures` by default, allow `PEF_FIXTURES_DIR` to override the directory, and are disabled
 when `manifest.json` is absent. Download provenance and hashes remain in the local manifest.
@@ -162,8 +162,8 @@ call from the handler, negative OSErr, looping/faulting callbacks, descriptor ow
 conversion, rollback, missing attributes, and invalid guest reads. Validation used Graphite
 master at 7ab800a. MacGzip still reaches its compatibility alert at 1,513 instructions/19 imports;
 MacZip stops at InitMenus (90 instructions), and BBEdit Lite passes AECreateList and
-NewRoutineDescriptor before calling FSpOpenDF with a null FSSpec pointer, which stops with
-a guest memory read fault (887 instructions, nine serviced imports).
+NewRoutineDescriptor and FSpOpenDF before stopping at PBReadSync (973 instructions,
+ten serviced imports), after its fragment initializer populates the application FSSpec.
 AECreateList creates unfactored lists and empty records. AEPutDesc/AEPutPtr, AECountItems,
 AEGetNthDesc, and AEDeleteItem bridge list operations through Graphite with signed one-based
 indices and index-zero append. Updates preserve guest handle identity; retrieved/duplicated
@@ -192,8 +192,19 @@ unchanged, and failed reference output closes the newly opened fork. Tests cover
 records, independent forks, seek modes, errors, reference reuse, guest endian output, and
 an interpreted PEF that opens, reads and closes a mounted fixture. FileSpec and ForkPosition
 use Graphite's types. Directory/catalog traversal, writes, parameter-block calls and general
-host filesystem mounting remain pending. BBEdit's null spec requires startup/caller tracing.
+host filesystem mounting remain pending.
 The interfaces follow Apple's [Introduction to File Management](https://dev.os9.ca/techpubs/mac/pdf/Files/Intro_to_Files.pdf).
+Before main, an optional PEF initializer receives a read-only classic CFM InitBlock with
+single-fragment context/closure/connection IDs, a locator, and a Pascal fragment name.
+Disk locators point to the mounted application's packed FSSpec at offset zero of its logical
+data fork; memory locators point to an owned guest copy of the complete PEF container.
+Both entries share memory, Toolbox state and one execution budget, with separate linkage
+frames and TVector TOCs. Diagnostics identify initialization stops; a nonzero signed OSErr
+prevents main. Explicit init also receives the block. Automatic termination and imported
+fragment initialization remain pending. Tests cover both locator kinds, ordering, shared
+heap state, error propagation, and limits spanning init/main. Tracing confirmed BBEdit's
+initializer copies the locator FSSpec into the globals used by its startup data-fork open.
+The block layout follows Apple's [Code Fragment Manager summary](https://dev.os9.ca/techpubs/mac/PPCSoftware/PPCSoftware-66.html).
 The record layout and event interfaces follow Apple's
 [Introduction to Apple Events](https://developer.apple.com/library/archive/documentation/mac/pdf/Interapplication_Communication/Intro_to_Apple_Events.pdf)
 and [Responding to Apple Events](https://dev.os9.ca/techpubs/mac/pdf/Interapplication_Communication/Responding_to_AEs.pdf).

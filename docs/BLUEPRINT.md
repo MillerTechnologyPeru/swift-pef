@@ -52,7 +52,7 @@ Reference specifications:
 Validation includes synthetic format fixtures, native macOS xattr tests, and 30 local real-file
 cases: preparation/export lookup/entry-vector relocation for 15 PowerPC PEF payloads and resource
 parsing for their 15 AppleDouble sidecars. Payloads include MacGzip 1.1.3, MacZip 1.06, BBEdit Lite's
-Classic and Carbon variants, and eleven BBEdit plug-ins. The full suite passes 223 cases.
+Classic and Carbon variants, and eleven BBEdit plug-ins. The full suite passes 229 cases.
 Real-file tests use placeholder import addresses and never execute guest code. They use
 `.build/fixtures` by default, allow `PEF_FIXTURES_DIR` to override the directory, and are disabled
 when `manifest.json` is absent. Download provenance and hashes remain in the local manifest.
@@ -162,8 +162,8 @@ call from the handler, negative OSErr, looping/faulting callbacks, descriptor ow
 conversion, rollback, missing attributes, and invalid guest reads. Validation used Graphite
 master at 7ab800a. MacGzip still reaches its compatibility alert at 1,513 instructions/19 imports;
 MacZip stops at InitMenus (90 instructions), and BBEdit Lite passes AECreateList and
-NewRoutineDescriptor and FSpOpenDF before stopping at PBReadSync (973 instructions,
-ten serviced imports), after its fragment initializer populates the application FSSpec.
+NewRoutineDescriptor, FSpOpenDF, and PBReadSync before stopping at FindSymbol (1,190 instructions,
+17 serviced imports), after its fragment initializer populates the application FSSpec.
 AECreateList creates unfactored lists and empty records. AEPutDesc/AEPutPtr, AECountItems,
 AEGetNthDesc, and AEDeleteItem bridge list operations through Graphite with signed one-based
 indices and index-zero append. Updates preserve guest handle identity; retrieved/duplicated
@@ -191,9 +191,18 @@ Reads report actual counts and eofErr for partial transfers; output faults leave
 unchanged, and failed reference output closes the newly opened fork. Tests cover packed
 records, independent forks, seek modes, errors, reference reuse, guest endian output, and
 an interpreted PEF that opens, reads and closes a mounted fixture. FileSpec and ForkPosition
-use Graphite's types. Directory/catalog traversal, writes, parameter-block calls and general
+use Graphite's types. Directory/catalog traversal, writes, other parameter-block calls and general
 host filesystem mounting remain pending.
 The interfaces follow Apple's [Introduction to File Management](https://dev.os9.ca/techpubs/mac/pdf/Files/Intro_to_Files.pdf).
+PBReadSync and synchronous PBRead decode packed 50-byte IOParam records, including the
+unaligned ioPosOffset long at byte 46. Positioned reads update the guest buffer, ioActCount,
+ioPosOffset and signed ioResult, matching the OSErr returned in r3. Normal errors clear the
+actual count; partial EOF returns the transferred bytes and eofErr. File marks commit only
+after checked outputs succeed. Synchronous calls ignore ioCompletion; asynchronous calls
+remain explicit unsupported imports, and advanced positioning/read flags return unimpErr.
+Tests cover positioning modes, packed endian output, preserved input fields, partial/zero
+reads, bad references/counts/offsets, output faults, wrapped blocks, and interpreted PB reads.
+The layout follows Apple's [Device Manager summary](https://dev.os9.ca/techpubs/mac/Devices/Devices-52.html).
 Before main, an optional PEF initializer receives a read-only classic CFM InitBlock with
 single-fragment context/closure/connection IDs, a locator, and a Pascal fragment name.
 Disk locators point to the mounted application's packed FSSpec at offset zero of its logical

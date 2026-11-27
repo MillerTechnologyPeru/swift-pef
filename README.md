@@ -39,8 +39,12 @@ resource menus, menu tracking, and menu color resources remain pending.
 `TEInit` creates an empty private-scrap handle in guest memory; `TEScrapHandle`,
 `TEGetScrapHandle`, and `TEGetScrapLength` expose that initial state. TextEdit records,
 editing, hooks, scrap resizing, and system clipboard transfer remain pending.
-MacGzip now passes initialization through `TEInit`, reaching `InterfaceLib:InitDialogs`
-after 123 instructions.
+`InitDialogs` retains the guest resume pointer and initializes empty substitution strings
+and the default dialog font. `SetDialogFont`/`SetDAFont` and `ParamText` update per-run state;
+Pascal-string reads are range checked and copied. Dialog creation, modal handling, alert
+audio, and guest callback invocation remain pending.
+MacGzip now passes the initial Toolbox setup and cursor initialization, reaching
+`InterfaceLib:MaxApplZone` after 139 instructions.
 Further Toolbox dispatch and full application startup remain pending, as do Linux/ppc32
 and Embedded Swift validation.
 

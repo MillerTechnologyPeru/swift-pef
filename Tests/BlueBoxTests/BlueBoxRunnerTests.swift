@@ -1,5 +1,6 @@
 import Foundation
 import Testing
+import Graphite
 @testable import BlueBox
 
 @Suite struct BlueBoxRunnerTests {
@@ -265,6 +266,20 @@ import Testing
         }
     }
 
+    @Test func guestReadsStringBytesFromApplicationResourceFork() throws {
+        let resources = try ResourceMap.write([(resource: Resource(type: "STR#", id: -7),
+                                                bytes: [0, 1, 1, 0x8E])])
+        let code: [UInt32] = [0x7FC802A6, 0x3BE20028, 0x387F0000, 0x3880FFF9, 0x38A00001,
+                              0x81820004, 0x800C0000, 0x804C0004, 0x7C0903A6, 0x4E800421,
+                              0x887F0001, 0x7FC803A6, 0x4E800020]
+        let report = try executable(code, imported: true, importedSymbol: "GetIndString").withUnsafeBytes {
+            try BlueBoxRunner.run(bytes: $0, resourceFork: resources)
+        }
+        #expect(report.execution.stop == .returned)
+        #expect(report.execution.r3 == 0x8E)
+        #expect(report.handledImportCount == 1)
+    }
+
     @Test func initGrafRejectsReadOnlyGuestDestination() throws {
         // Pass thePort=code+126, making InitGraf's first write target the code section.
         let code: [UInt32] = [0x3C600100, 0x3863007E,
@@ -304,15 +319,18 @@ import Testing
             .deletingLastPathComponent().deletingLastPathComponent().appendingPathComponent(".build/fixtures")
         let path = root.appendingPathComponent("extracted/macgzip/MacGzip/MacGzip")
         guard FileManager.default.fileExists(atPath: path.path) else { return }
-        let data = try Data(contentsOf: path)
-        let report = try data.withUnsafeBytes { try BlueBoxRunner.run(bytes: $0, maxInstructions: 1000) }
+        let app = try BlueBoxApplication.load(path: path.path)
+        #expect(app.resourceFork != nil)
+        let report = try app.dataFork.withUnsafeBytes {
+            try BlueBoxRunner.run(bytes: $0, resourceFork: app.resourceFork, maxInstructions: 1000)
+        }
         guard case .unsupportedImport(let index) = report.execution.stop else {
             Issue.record("Expected next unsupported import; got \(report.diagnostic)")
             return
         }
         #expect(report.imports[Int(index)].library == "InterfaceLib")
-        #expect(report.imports[Int(index)].symbol == "GetIndString")
-        #expect(report.handledImportCount == 12)
-        #expect(report.execution.instructions == 193)
+        #expect(report.imports[Int(index)].symbol == "p2cstr")
+        #expect(report.handledImportCount == 13)
+        #expect(report.execution.instructions == 202)
     }
 }

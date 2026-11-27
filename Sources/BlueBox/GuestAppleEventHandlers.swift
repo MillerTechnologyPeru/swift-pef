@@ -11,7 +11,7 @@ final class GuestAppleEventHandlers {
         dispatcher.install(AppleEventDispatcher.Entry(
             eventClass: FourCharCode(eventClass), eventID: FourCharCode(eventID), isSystem: isSystem,
             procedure: UInt(procedure), referenceConstant: UInt(referenceConstant), handler: { _, _ throws(MacError) in
-                // A later guest callback bridge must provide descriptor marshaling and interpreter reentry.
+                // ToolboxRuntime schedules guest execution; Graphite must never call a guest address natively.
                 throw .unimplemented
             }
         ))

@@ -1,5 +1,6 @@
 import Foundation
 import PEFKit
+import Graphite
 #if canImport(Glibc)
 import Glibc
 #elseif canImport(Darwin)
@@ -45,9 +46,12 @@ do {
     }
     guard let path else { throw BlueBoxError.invalidArguments(usage) }
     let application = try BlueBoxApplication.load(path: path)
+    let file = GuestFile(name: FileNames.specName(URL(fileURLWithPath: path).lastPathComponent, id: 16),
+                         dataFork: Array(application.dataFork), resourceFork: application.resourceFork ?? [])
     let report = try application.dataFork.withUnsafeBytes { bytes in
         try BlueBoxRunner.run(bytes: bytes, resourceFork: application.resourceFork,
                              captureFramebuffer: framebufferPath != nil,
+                             files: [file],
                              entry: entry, maxInstructions: limit)
     }
     print("Loaded \(report.sectionCount) sections; entry=\(hex(report.codeAddress)), toc=\(hex(report.toc)), sp=\(hex(report.initialStackPointer))")

@@ -263,19 +263,19 @@ import Testing
         let bytes = GuestRoutineDescriptor.bytes(vector: 0x1000, procInfo: 0xFE0)
         _ = memory.write(0x200, bytes)
         #expect(try GuestRoutineDescriptor.resolve(0x200, expectedProcInfo: 0xFE0, read: memory.read) == 0x1000)
-        #expect(throws: EmulatedPPCBackend.CallbackError.unsupportedRoutineDescriptor) {
+        #expect(throws: GuestCallbackError.unsupportedRoutineDescriptor) {
             try GuestRoutineDescriptor.resolve(0x200, expectedProcInfo: 0x1234, read: memory.read)
         }
         for (offset, value): (Int, UInt8) in [(2, 6), (3, 1), (11, 1), (17, 0), (19, 1), (19, 2), (28, 1)] {
             var invalid = bytes
             invalid[offset] = value
             _ = memory.write(0x200, invalid)
-            #expect(throws: EmulatedPPCBackend.CallbackError.unsupportedRoutineDescriptor) {
+            #expect(throws: GuestCallbackError.unsupportedRoutineDescriptor) {
                 try GuestRoutineDescriptor.resolve(0x200, expectedProcInfo: 0xFE0, read: memory.read)
             }
         }
         _ = memory.write(0x200, [0xAA, 0xFE])
-        #expect(throws: EmulatedPPCBackend.CallbackError.invalidVector) {
+        #expect(throws: GuestCallbackError.invalidVector) {
             try GuestRoutineDescriptor.resolve(0x200, expectedProcInfo: nil, read: { address, count in
                 count <= 2 ? memory.read(address, count) : nil
             })

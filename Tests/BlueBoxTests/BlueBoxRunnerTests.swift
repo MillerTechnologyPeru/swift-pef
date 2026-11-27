@@ -367,14 +367,14 @@ import Graphite
         let app = try BlueBoxApplication.load(path: path.path)
         #expect(app.resourceFork != nil)
         let report = try app.dataFork.withUnsafeBytes {
-            try BlueBoxRunner.run(bytes: $0, resourceFork: app.resourceFork, maxInstructions: 10000)
+            try BlueBoxRunner.run(bytes: $0, resourceFork: app.resourceFork,
+                                  captureFramebuffer: true, maxInstructions: 10000)
         }
-        guard case .unsupportedImport(let index) = report.execution.stop else {
-            Issue.record("Expected next unsupported import; got \(report.diagnostic)")
-            return
-        }
-        #expect(report.imports[Int(index)].library == "InterfaceLib")
-        #expect(report.imports[Int(index)].symbol == "StopAlert")
+        #expect(report.execution.stop == .alertPending)
+        #expect(report.pendingAlert?.id == 151)
+        #expect(report.diagnostic.contains("Sorry, System 7 required"))
+        #expect(report.diagnostic.contains("gestaltUndefSelectorErr"))
+        #expect(report.framebufferPPM?.count == 921615)
         #expect(report.handledImportCount == 19)
         #expect(report.execution.instructions == 1513)
     }

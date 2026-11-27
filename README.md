@@ -97,7 +97,11 @@ application file, or an owned in-memory PEF container for memory-loaded fragment
 Initialization errors or execution stops prevent `main` from running. This initializes
 BBEdit Lite's application `FSSpec`. Synchronous `PBReadSync` and `PBRead(..., false)` now
 support packed `IOParam` records, positioning, actual counts, and partial EOF results.
-BBEdit now opens and reads its data fork, reaching `FindSymbol` at 1,190 instructions.
+`FindSymbol` and `CountSymbols` expose the prepared application's exports through connection
+ID 1, with relocated section, absolute, and re-exported addresses. Lookup uses exact name
+bytes and checked guest outputs; missing connections and symbols return CFM errors.
+BBEdit now opens and reads its data fork, passes symbol lookup, and reaches `EqualString`
+at 12,494 instructions. Dynamic library loading and symbol enumeration remain pending.
 Asynchronous I/O, completion callbacks, read-mode flags, and other parameter-block calls remain pending.
 Further Toolbox dispatch and full application startup remain pending, as do Linux/ppc32
 and Embedded Swift validation.

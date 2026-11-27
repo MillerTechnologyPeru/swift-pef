@@ -1,18 +1,24 @@
 import CMORA
 import Graphite
 
+struct ToolboxMemoryFault: Equatable {
+    let address: UInt32
+    let write: Bool
+}
+
 /// Per-fragment Toolbox state. Guest pointers are never treated as host pointers.
 struct ToolboxRuntime {
     private let ticks: () -> UInt32
     let quickDraw: QuickDraw
     var cursor: CursorState { quickDraw.cursor }
     private(set) var handledImportCount: UInt64 = 0
-    private(set) var guestMemoryFault: UInt32?
+    private(set) var guestMemoryFault: ToolboxMemoryFault?
     private(set) var globalsAddress: UInt32?
     private(set) var fonts: FontRegistry?
     private(set) var windowManagerPort: Port?
     private(set) var menuManager: HeadlessMenuManager?
     private(set) var textEditScrapLength: UInt32?
+    private(set) var dialogs: DialogManagerState?
 
     /// Low-level event kinds in chronological order; host input delivery is still pending.
     var pendingEventKinds: [UInt16] = []
@@ -31,17 +37,38 @@ struct ToolboxRuntime {
 
     /// Dispatch only callable InterfaceLib imports. Unsupported symbols remain visible to the runner.
     mutating func dispatch(_ symbol: GuestImport, frame: inout MORAInvocationFrame,
+                           readGuest: ((UInt32, Int) -> [UInt8]?)? = nil,
                            writeGuest: ((UInt32, [UInt8]) -> Bool)? = nil) -> Bool {
         guard symbol.library == "InterfaceLib",
               symbol.symbolClass == .tVector || symbol.symbolClass == .code || symbol.symbolClass == .glue else {
             return false
         }
         switch symbol.symbol {
+        case "InitDialogs":
+            let resume = withUnsafeBytes(of: frame.gpr) { $0.bindMemory(to: UInt32.self)[0] }
+            dialogs = DialogManagerState(resumeProcedure: resume)
+        case "SetDialogFont", "SetDAFont":
+            guard dialogs != nil else { return false }
+            dialogs?.font = withUnsafeBytes(of: frame.gpr) { Int16(truncatingIfNeeded: $0.bindMemory(to: UInt32.self)[0]) }
+        case "ParamText":
+            guard var dialogs, let readGuest else { return false }
+            let addresses = withUnsafeBytes(of: frame.gpr) { Array($0.bindMemory(to: UInt32.self).prefix(4)) }
+            var parameters: [PascalString] = []
+            for address in addresses {
+                guard let header = readGuest(address, 1), let length = header.first,
+                      let bytes = readGuest(address, Int(length) + 1), bytes.count == Int(length) + 1 else {
+                    guestMemoryFault = ToolboxMemoryFault(address: address, write: false)
+                    return false
+                }
+                parameters.append(PascalString(lengthPrefixed: bytes))
+            }
+            dialogs.parameterText = parameters
+            self.dialogs = dialogs
         case "TEInit":
             if textEditScrapLength == nil {
                 guard let writeGuest else { return false }
                 guard writeGuest(GuestTextEdit.scrapHandle, GuestTextEdit.initialBytes) else {
-                    guestMemoryFault = GuestTextEdit.scrapHandle
+                    guestMemoryFault = ToolboxMemoryFault(address: GuestTextEdit.scrapHandle, write: true)
                     return false
                 }
                 textEditScrapLength = 0
@@ -71,7 +98,7 @@ struct ToolboxRuntime {
             if windowManagerPort == nil {
                 guard let writeGuest, let screen = quickDraw.mainDevice else { return false }
                 guard writeGuest(GuestWindowManager.address, GuestWindowManager.initialBytes()) else {
-                    guestMemoryFault = GuestWindowManager.address
+                    guestMemoryFault = ToolboxMemoryFault(address: GuestWindowManager.address, write: true)
                     return false
                 }
                 let port = Port(pixels: screen.pixels)
@@ -84,7 +111,7 @@ struct ToolboxRuntime {
             var writer = BigEndianWriter(capacity: 4)
             writer.write(GuestWindowManager.address)
             guard writeGuest(address, writer.bytes) else {
-                guestMemoryFault = address
+                guestMemoryFault = ToolboxMemoryFault(address: address, write: true)
                 return false
             }
         case "FrontWindow":
@@ -108,19 +135,19 @@ struct ToolboxRuntime {
             let name = initializeFonts().name(of: arguments.0) ?? ""
             let bytes = (PascalString(name) ?? PascalString()).lengthPrefixed
             guard writeGuest(arguments.1, bytes) else {
-                guestMemoryFault = arguments.1
+                guestMemoryFault = ToolboxMemoryFault(address: arguments.1, write: true)
                 return false
             }
         case "InitGraf":
             guard let writeGuest else { return false }
             let thePort = withUnsafeBytes(of: frame.gpr) { $0.bindMemory(to: UInt32.self)[0] }
             guard thePort >= GuestQuickDrawGlobals.publicPrefixLength else {
-                guestMemoryFault = thePort
+                guestMemoryFault = ToolboxMemoryFault(address: thePort, write: true)
                 return false
             }
             let start = thePort - GuestQuickDrawGlobals.publicPrefixLength
             guard writeGuest(start, GuestQuickDrawGlobals.initialBytes()) else {
-                guestMemoryFault = start
+                guestMemoryFault = ToolboxMemoryFault(address: start, write: true)
                 return false
             }
             globalsAddress = start

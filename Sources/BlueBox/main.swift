@@ -51,7 +51,7 @@ do {
     let report = try application.dataFork.withUnsafeBytes { bytes in
         try BlueBoxRunner.run(bytes: bytes, resourceFork: application.resourceFork,
                              captureFramebuffer: framebufferPath != nil,
-                             files: [file],
+                             applicationFile: file,
                              entry: entry, maxInstructions: limit)
     }
     print("Loaded \(report.sectionCount) sections; entry=\(hex(report.codeAddress)), toc=\(hex(report.toc)), sp=\(hex(report.initialStackPointer))")

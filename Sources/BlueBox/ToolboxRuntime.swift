@@ -31,6 +31,13 @@ struct ToolboxRuntime {
     private var resourceHandles: [GuestResourceKey: UInt32] = [:]
     private(set) var pendingAlert: GuestAlert?
     let appleEventHandlers = GuestAppleEventHandlers()
+    private var appleEventDescriptors = GuestAppleEventDescriptors()
+    private var launchEventAvailable = true
+    private var deliveredAppleEventRecord: [UInt8]?
+    private var appleEventCallbackActive = false
+    private var callbackRecords: UInt32?
+    private(set) var pendingAppleEventCallback: GuestPPCInvocation?
+
 
     /// Low-level event kinds in chronological order; host input delivery is still pending.
     var pendingEventKinds: [UInt16] = []
@@ -58,6 +65,24 @@ struct ToolboxRuntime {
             return false
         }
         switch symbol.symbol {
+        case "AECreateDesc", "AEDuplicateDesc", "AEDisposeDesc", "AEGetDescData", "AEGetDescDataSize",
+             "AEGetAttributeDesc", "AEGetParamDesc", "AEGetAttributePtr", "AEGetParamPtr", "AECreateAppleEvent", "AEProcessAppleEvent",
+             "GetNextEvent", "EventAvail", "WaitNextEvent":
+            guard let readGuest, let writeGuest else { return false }
+            if symbol.symbol == "WaitNextEvent" {
+                let arguments = withUnsafeBytes(of: frame.gpr) { Array($0.bindMemory(to: UInt32.self)) }
+                guard arguments[2] == 0, arguments[3] == 0 else { return false }
+            }
+            do {
+                try dispatchAppleEvent(symbol.symbol, frame: &frame, read: readGuest, write: writeGuest)
+            } catch let fault as ToolboxMemoryFault {
+                guestMemoryFault = fault
+                return false
+            } catch let error as MacError {
+                frame.returnGPR = UInt32(bitPattern: error.code)
+            } catch {
+                return false
+            }
         case "AEInstallEventHandler", "AEGetEventHandler", "AERemoveEventHandler":
             let arguments = withUnsafeBytes(of: frame.gpr) { Array($0.bindMemory(to: UInt32.self).prefix(5)) }
             do throws(MacError) {
@@ -419,6 +444,130 @@ struct ToolboxRuntime {
                 return false
             }
             return whichMask & mask != 0
+        }
+    }
+}
+
+// MARK: Guest AppleEvent descriptors and the initial host launch event
+extension ToolboxRuntime {
+    mutating func takeAppleEventCallback() -> GuestPPCInvocation? {
+        defer { pendingAppleEventCallback = nil }
+        return pendingAppleEventCallback
+    }
+
+    mutating func completeAppleEventCallback(read: (UInt32, Int) -> [UInt8]?,
+                                            write: (UInt32, [UInt8]) -> Bool) {
+        defer { callbackRecords = nil; appleEventCallbackActive = false }
+        guard let records = callbackRecords else { return }
+        for address in [records, records + 8] {
+            do { try appleEventDescriptors.dispose(at: address, heap: &heap, read: read, write: write) }
+            catch let fault as ToolboxMemoryFault { guestMemoryFault = fault }
+            catch { /* A guest may already have disposed a borrowed descriptor. */ }
+        }
+        heap.disposePointer(records)
+    }
+
+    private mutating func dispatchAppleEvent(_ name: String, frame: inout MORAInvocationFrame,
+        read: (UInt32, Int) -> [UInt8]?, write: (UInt32, [UInt8]) -> Bool) throws {
+        typealias Coding = GuestAppleEventDescriptors
+        let a = withUnsafeBytes(of: frame.gpr) { Array($0.bindMemory(to: UInt32.self)) }
+        frame.returnGPR = 0
+        switch name {
+        case "GetNextEvent", "EventAvail", "WaitNextEvent":
+            // Headless retrieval only: sleeping and mouse-region transitions require a host event source.
+            if name == "WaitNextEvent", a[2] != 0 || a[3] != 0 { throw MacError.unimplemented }
+            let found = launchEventAvailable && UInt16(truncatingIfNeeded: a[0]) & 0x0400 != 0
+            let record: [UInt8] = found
+                ? [0, 23] + Coding.word(AppleEvent.Core.eventClass.rawValue) + Coding.word(ticks())
+                    + Coding.word(AppleEvent.Core.openApplication.rawValue) + [0, 0]
+                : [0, 0] + Coding.word(0) + Coding.word(ticks()) + [0, 0, 0, 0, 0, 0]
+            try Coding.write(a[1], bytes: record, using: write)
+            if found, name != "EventAvail" {
+                launchEventAvailable = false
+                deliveredAppleEventRecord = record
+            }
+            frame.returnGPR = found ? 1 : 0
+        case "AECreateDesc":
+            try Coding.write(a[3], bytes: Coding.word(DescriptorType.null.rawValue) + Coding.word(0), using: write)
+            guard Int32(bitPattern: a[2]) >= 0 else { throw MacError.parameter }
+            // Structured descriptors require their specific creation APIs.
+            let type = FourCharCode(a[0])
+            guard type != DescriptorType.appleEvent, type != DescriptorType.list,
+                  type != DescriptorType.record else { throw MacError.unimplemented }
+            let bytes = a[2] == 0 || type == DescriptorType.null ? []
+                : try Coding.read(a[1], count: Int(a[2]), using: read)
+            try appleEventDescriptors.store(Descriptor(type: type, bytes: bytes), at: a[3], heap: &heap, write: write)
+        case "AEDuplicateDesc":
+            let value = try appleEventDescriptors.load(at: a[0], heap: &heap, read: read)
+            try appleEventDescriptors.store(value, at: a[1], heap: &heap, write: write)
+        case "AEDisposeDesc":
+            try appleEventDescriptors.dispose(at: a[0], heap: &heap, read: read, write: write)
+        case "AEGetDescData", "AEGetDescDataSize":
+            let value = try appleEventDescriptors.load(at: a[0], heap: &heap, read: read)
+            guard !value.isAppleEvent, !value.isList, !value.isKeyed else { throw MacError.unimplemented }
+            if name == "AEGetDescDataSize" { frame.returnGPR = UInt32(value.bytes.count) }
+            else {
+                guard Int32(bitPattern: a[2]) >= 0 else { throw MacError.parameter }
+                let bytes = Array(value.bytes.prefix(Int(a[2])))
+                if !bytes.isEmpty { try Coding.write(a[1], bytes: bytes, using: write) }
+            }
+        case "AECreateAppleEvent":
+            let target = try appleEventDescriptors.load(at: a[2], heap: &heap, read: read)
+            let event = AppleEvent(eventClass: FourCharCode(a[0]), eventID: FourCharCode(a[1]), target: target,
+                                   returnID: Int16(truncatingIfNeeded: a[3]), transactionID: Int32(bitPattern: a[4]))
+            try appleEventDescriptors.store(event.descriptor, at: a[5], heap: &heap, write: write)
+        case "AEGetAttributeDesc", "AEGetParamDesc", "AEGetAttributePtr", "AEGetParamPtr":
+            let value = try appleEventDescriptors.load(at: a[0], heap: &heap, read: read)
+            let attribute = name.hasPrefix("AEGetAttribute")
+            guard value.isAppleEvent else { throw MacError.notAppleEvent }
+            guard let item = attribute ? value.attribute(FourCharCode(a[1])) : value[FourCharCode(a[1])] else {
+                throw MacError.descriptorNotFound
+            }
+            guard a[2] == DescriptorType.wildCard.rawValue || a[2] == item.type.rawValue else { throw MacError.coercionFailed }
+            // Graphite stores scalar attributes in host order; guest records are big-endian.
+            var guestItem = item
+            if attribute, [AppleEvent.Attribute.eventClass, AppleEvent.Attribute.eventID].contains(FourCharCode(a[1])),
+               let code = item.code { guestItem.bytes = Coding.word(code.rawValue) }
+            if attribute, FourCharCode(a[1]) == AppleEvent.Attribute.returnID {
+                let id = UInt16(bitPattern: item.load(as: Int16.self) ?? 0)
+                guestItem.bytes = [UInt8(id >> 8), UInt8(truncatingIfNeeded: id)]
+            }
+            if attribute, FourCharCode(a[1]) == AppleEvent.Attribute.transactionID {
+                guestItem.bytes = Coding.word(UInt32(bitPattern: item.load(as: Int32.self) ?? 0))
+            }
+            if name.hasSuffix("Ptr") {
+                guard Int32(bitPattern: a[5]) >= 0 else { throw MacError.parameter }
+                try Coding.write(a[3], bytes: Coding.word(guestItem.type.rawValue), using: write)
+                try Coding.write(a[6], bytes: Coding.word(UInt32(guestItem.bytes.count)), using: write)
+                let bytes = Array(guestItem.bytes.prefix(Int(a[5])))
+                if !bytes.isEmpty { try Coding.write(a[4], bytes: bytes, using: write) }
+            } else {
+                try appleEventDescriptors.store(guestItem, at: a[3], heap: &heap, write: write)
+            }
+        case "AEProcessAppleEvent":
+            guard !appleEventCallbackActive else { throw MacError.unimplemented }
+            let record = try Coding.read(a[0], count: 16, using: read)
+            guard record == deliveredAppleEventRecord else { throw MacError.eventNotHandled }
+            deliveredAppleEventRecord = nil
+            let event = AppleEvent(eventClass: AppleEvent.Core.eventClass, eventID: AppleEvent.Core.openApplication)
+            guard let handler = appleEventHandlers.handler(for: event) else { throw MacError.eventNotHandled }
+            let records = heap.newPointer(size: 16, clear: true, write: write)
+            if let fault = heap.memoryFault { throw fault }
+            guard records != 0 else { throw MacError(Int32(heap.lastError)) }
+            do {
+                try appleEventDescriptors.store(event.descriptor, at: records, heap: &heap, write: write)
+                do {
+                    try appleEventDescriptors.store(AppleEvent.reply(to: event).descriptor, at: records + 8, heap: &heap, write: write)
+                } catch {
+                    try? appleEventDescriptors.dispose(at: records, heap: &heap, read: read, write: write)
+                    throw error
+                }
+            } catch { heap.disposePointer(records); throw error }
+            callbackRecords = records
+            appleEventCallbackActive = true
+            pendingAppleEventCallback = GuestPPCInvocation(vector: UInt32(handler.procedure),
+                arguments: [records, records + 8, UInt32(handler.referenceConstant)])
+        default: throw MacError.unimplemented
         }
     }
 }

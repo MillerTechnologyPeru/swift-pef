@@ -48,7 +48,12 @@ allocation and clearing, disposal, size queries, `FreeMem`, and `MemError`. Mast
 are guest addresses; freed blocks coalesce for reuse. Resizing, compaction, purging, locking,
 grow-zone callbacks, and separate system zones remain pending. CPU access checks cover the
 heap mapping rather than individual allocation lifetimes.
-MacGzip now passes initial heap setup, reaching `InterfaceLib:Gestalt` after 168 instructions.
+Gestalt uses an explicit guest profile: a Mac OS 9.0 compatibility version, PowerPC
+architecture, 16 MiB memory budget, and monochrome QuickDraw. It writes checked big-endian
+responses; unimplemented selectors return `gestaltUndefSelectorErr` without touching the
+response. Host capabilities and optional managers are not advertised.
+MacGzip now passes its first capability query, reaching `InterfaceLib:GetIndString`
+after 193 instructions.
 Further Toolbox dispatch and full application startup remain pending, as do Linux/ppc32
 and Embedded Swift validation.
 

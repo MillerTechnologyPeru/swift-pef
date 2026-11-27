@@ -19,6 +19,7 @@ struct ToolboxRuntime {
     private(set) var menuManager: HeadlessMenuManager?
     private(set) var textEditScrapLength: UInt32?
     private(set) var dialogs: DialogManagerState?
+    private(set) var heap = GuestHeap()
 
     /// Low-level event kinds in chronological order; host input delivery is still pending.
     var pendingEventKinds: [UInt16] = []
@@ -44,6 +45,34 @@ struct ToolboxRuntime {
             return false
         }
         switch symbol.symbol {
+        case "MaxApplZone":
+            heap.maximizeApplicationZone()
+        case "MoreMasters":
+            guard let writeGuest else { return false }
+            heap.moreMasters(write: writeGuest)
+        case "NewPtr", "NewPtrClear", "NewHandle", "NewHandleClear", "NewEmptyHandle":
+            guard let writeGuest else { return false }
+            let size = withUnsafeBytes(of: frame.gpr) { Int32(bitPattern: $0.bindMemory(to: UInt32.self)[0]) }
+            if symbol.symbol == "NewPtr" || symbol.symbol == "NewPtrClear" {
+                frame.returnGPR = heap.newPointer(size: size, clear: symbol.symbol == "NewPtrClear", write: writeGuest)
+            } else {
+                frame.returnGPR = heap.newHandle(size: symbol.symbol == "NewEmptyHandle" ? 0 : size,
+                                               clear: symbol.symbol == "NewHandleClear", write: writeGuest)
+            }
+        case "DisposePtr", "DisposPtr", "DisposeHandle", "DisposHandle", "GetPtrSize", "GetHandleSize":
+            let address = withUnsafeBytes(of: frame.gpr) { $0.bindMemory(to: UInt32.self)[0] }
+            switch symbol.symbol {
+            case "DisposePtr", "DisposPtr": heap.disposePointer(address)
+            case "DisposeHandle", "DisposHandle":
+                guard let writeGuest else { return false }
+                heap.disposeHandle(address, write: writeGuest)
+            case "GetPtrSize": frame.returnGPR = UInt32(bitPattern: heap.pointerSize(address))
+            default: frame.returnGPR = UInt32(bitPattern: heap.handleSize(address))
+            }
+        case "MemError":
+            frame.returnGPR = UInt32(bitPattern: Int32(heap.lastError))
+        case "FreeMem":
+            frame.returnGPR = heap.freeBytes
         case "InitDialogs":
             let resume = withUnsafeBytes(of: frame.gpr) { $0.bindMemory(to: UInt32.self)[0] }
             dialogs = DialogManagerState(resumeProcedure: resume)
@@ -173,6 +202,10 @@ struct ToolboxRuntime {
             }
             flushEvents(whichMask: masks.0, stopMask: masks.1)
         default:
+            return false
+        }
+        if let fault = heap.memoryFault {
+            guestMemoryFault = fault
             return false
         }
         handledImportCount += 1

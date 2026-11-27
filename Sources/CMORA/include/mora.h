@@ -2,6 +2,7 @@
 #define CMORA_MORA_H
 
 #include <stdint.h>
+#include "mora_offsets.h"
 
 #ifdef __cplusplus
 extern "C" {
@@ -23,14 +24,25 @@ typedef struct MORAInvocationFrame {
     double   returnFPR;     // f1 floating-point return value
 } MORAInvocationFrame;
 
-/// Guest-to-Host assembly entry point placed into synthetic import TVectors
-extern void mora_to_sysv_thunk(void);
+typedef void (*MORADispatchFunction)(uint32_t symbolIndex, MORAInvocationFrame *frame, void *context);
 
-/// Host-to-Guest assembly helper to invoke a guest TVector from Swift
-extern void sysv_to_mora_call(const MORATVector *tvector, MORAInvocationFrame *frame);
+typedef enum MORAStatus {
+    MORA_STATUS_SUCCESS = 0,
+    MORA_STATUS_UNAVAILABLE = 1,
+    MORA_STATUS_INVALID_ARGUMENT = 2,
+    MORA_STATUS_HOST_ERROR = 3
+} MORAStatus;
 
-/// Swift C-ABI dispatcher invoked by mora_to_sysv_thunk
-extern void swift_dispatch_cfm_call(uint32_t symbolIndex, MORAInvocationFrame *frame);
+/// Nonzero only on big-endian Linux PPC32. Returns zero on all other targets.
+uintptr_t mora_import_thunk_address(void);
+
+/// Invoke register-only MORA arguments on the calling thread's stack.
+/// Native entries are serialized; same-thread nested callbacks are supported.
+/// The dispatcher must return normally: no unwinding, longjmp, or signal-handler entry.
+/// callerSP is output, identifying the MORA linkage/argument area used for this call.
+/// Additional stack arguments, vector arguments, and fault containment are not provided.
+MORAStatus mora_call(const MORATVector *tvector, MORAInvocationFrame *frame,
+                     MORADispatchFunction dispatch, void *context);
 
 // Classic Mac OS Toolbox structs require 2-byte (mac68k) alignment
 #pragma pack(push, 2)

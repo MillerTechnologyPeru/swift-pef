@@ -33,6 +33,7 @@ struct ToolboxRuntime {
     let appleEventHandlers = GuestAppleEventHandlers()
     private var routineDescriptors: Set<UInt32> = []
     private var fileManager: GuestFileManager
+    private let fragmentSymbols: GuestFragmentSymbols?
     private var appleEventDescriptors = GuestAppleEventDescriptors()
     private var launchEventAvailable = true
     private var deliveredAppleEventRecord: [UInt8]?
@@ -48,10 +49,12 @@ struct ToolboxRuntime {
     init(screenPixels: UnsafeMutableRawPointer? = nil,
          resources: ResourceFile? = nil,
          files: [GuestFile] = [],
+         fragmentSymbols: GuestFragmentSymbols? = nil,
          ticks: @escaping () -> UInt32 = { SystemClock.ticks }) {
         self.ticks = ticks
         self.resources = resources
         fileManager = GuestFileManager(files: files)
+        self.fragmentSymbols = fragmentSymbols
         let bounds = GuestQuickDrawGlobals.screenBounds
         let pixels = screenPixels.map {
             PixelBuffer(wrapping: $0, rowBytes: GuestQuickDrawGlobals.screenRowBytes,
@@ -69,6 +72,28 @@ struct ToolboxRuntime {
             return false
         }
         switch symbol.symbol {
+        case "FindSymbol", "CountSymbols":
+            guard let readGuest, let writeGuest else { return false }
+            let a = withUnsafeBytes(of: frame.gpr) { Array($0.bindMemory(to: UInt32.self).prefix(4)) }
+            do {
+                guard let fragmentSymbols else { throw MacError(-2801) }
+                try fragmentSymbols.validate(connection: a[0])
+                if symbol.symbol == "CountSymbols" {
+                    try GuestAppleEventDescriptors.write(a[1], bytes: GuestAppleEventDescriptors.word(UInt32(fragmentSymbols.symbols.count)), using: writeGuest)
+                } else {
+                    let length = try GuestAppleEventDescriptors.read(a[1], count: 1, using: readGuest)[0]
+                    let bytes = try GuestAppleEventDescriptors.read(a[1], count: Int(length) + 1, using: readGuest)
+                    let export = try fragmentSymbols.find(Array(bytes.dropFirst()))
+                    try GuestAppleEventDescriptors.write(a[2], bytes: GuestAppleEventDescriptors.word(export.address), using: writeGuest)
+                    try GuestAppleEventDescriptors.write(a[3], bytes: [export.symbolClass], using: writeGuest)
+                }
+                frame.returnGPR = 0
+            } catch let fault as ToolboxMemoryFault {
+                guestMemoryFault = fault
+                return false
+            } catch let error as MacError {
+                frame.returnGPR = UInt32(bitPattern: error.code)
+            } catch { return false }
         case "FSpOpenDF", "FSpOpenRF", "FSClose", "FSRead", "GetEOF", "GetFPos", "SetFPos", "FSMakeFSSpec", "PBReadSync", "PBRead":
             guard let readGuest, let writeGuest else { return false }
             if symbol.symbol == "PBRead" {

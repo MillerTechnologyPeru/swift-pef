@@ -52,7 +52,7 @@ Reference specifications:
 Validation includes synthetic format fixtures, native macOS xattr tests, and 30 local real-file
 cases: preparation/export lookup/entry-vector relocation for 15 PowerPC PEF payloads and resource
 parsing for their 15 AppleDouble sidecars. Payloads include MacGzip 1.1.3, MacZip 1.06, BBEdit Lite's
-Classic and Carbon variants, and eleven BBEdit plug-ins. The full suite passes 126 cases.
+Classic and Carbon variants, and eleven BBEdit plug-ins. The full suite passes 130 cases.
 Real-file tests use placeholder import addresses and never execute guest code. They use
 `.build/fixtures` by default, allow `PEF_FIXTURES_DIR` to override the directory, and are disabled
 when `manifest.json` is absent. Download provenance and hashes remain in the local manifest.
@@ -60,8 +60,8 @@ BlueBox now maps prepared sections into guest memory, initializes r1/r2 from a s
 entry TVector, and runs PPC32Core with a bounded instruction count and memory permissions.
 Execution tests cover returns, loops, unsupported opcodes/imports, invalid entry addresses,
 and memory faults. The Educate Quotes plug-in executes 15 instructions before an unmapped read;
-the CLI runs MacGzip for 106 instructions, servicing `FlushEvents`, `InitGraf`, `InitFonts`,
-and `InitWindows` before stopping at `InterfaceLib:InitMenus`.
+the CLI runs MacGzip for 114 instructions, servicing `FlushEvents`, `InitGraf`, `InitFonts`,
+`InitWindows`, and `InitMenus` before stopping at `InterfaceLib:TEInit`.
 The initial per-run dispatcher bridges Graphite clocks and cursor state and implements
 FlushEvents mask/stop-mask queue filtering. Host input delivery, cursor presentation, and
 further QuickDraw operations still need integration. `InitGraf` writes the public globals
@@ -77,6 +77,11 @@ Window Manager initialization creates a headless Graphite screen port and a gues
 GetWMgrPort returns its guest address; FrontWindow handles the initial empty window list.
 Tests verify field offsets, guest region-handle dereferencing, repeat initialization, and
 rejected output pointers. Window creation, desktop painting, and native presentation remain pending.
+Menu initialization owns an empty list and draws a 20-pixel monochrome bar through Graphite
+into the shared screen. DrawMenuBar, ClearMenuBar, and GetMBarHeight cover that initial state.
+Tests check bar pixels and separator, desktop/current-port preservation, repeat initialization,
+per-run isolation, redraw behavior, and the guest height-query call. Resource menus, menu
+tracking, and menu color resources remain pending.
 Unknown libraries, symbols, and other data imports remain explicit failures. Further Toolbox
 dispatch, complete application startup, Linux/ppc32 cross-platform tests, and Embedded
 Swift validation remain outstanding.

@@ -95,8 +95,10 @@ Fragments with an initializer now receive a CFM initialization block before `mai
 guest memory, Toolbox state, and the execution budget. The block identifies the mounted
 application file, or an owned in-memory PEF container for memory-loaded fragments.
 Initialization errors or execution stops prevent `main` from running. This initializes
-BBEdit Lite's application `FSSpec`; it now opens its data fork and reaches `PBReadSync`
-at 973 instructions. Parameter-block I/O is the next File Manager gap.
+BBEdit Lite's application `FSSpec`. Synchronous `PBReadSync` and `PBRead(..., false)` now
+support packed `IOParam` records, positioning, actual counts, and partial EOF results.
+BBEdit now opens and reads its data fork, reaching `FindSymbol` at 1,190 instructions.
+Asynchronous I/O, completion callbacks, read-mode flags, and other parameter-block calls remain pending.
 Further Toolbox dispatch and full application startup remain pending, as do Linux/ppc32
 and Embedded Swift validation.
 

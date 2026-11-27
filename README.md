@@ -33,8 +33,11 @@ and write checked MacRoman Pascal strings. Resource fonts and host font discover
 `InitWindows` creates a headless monochrome Window Manager port over the shared screen,
 with packed guest GrafPort and region handles. `GetWMgrPort` returns its guest address and
 `FrontWindow` reports the initial empty window list. Window creation and presentation remain pending.
-MacGzip now passes `FlushEvents`, `InitGraf`, `InitFonts`, and `InitWindows`, reaching
-`InterfaceLib:InitMenus` after 106 instructions.
+`InitMenus` creates headless menu state and draws an empty 20-pixel Roman-script menu bar
+through Graphite. `DrawMenuBar`, `ClearMenuBar`, and `GetMBarHeight` support that initial state;
+resource menus, menu tracking, and menu color resources remain pending.
+MacGzip now passes initialization through `InitMenus`, reaching `InterfaceLib:TEInit`
+after 114 instructions.
 Further Toolbox dispatch and full application startup remain pending, as do Linux/ppc32
 and Embedded Swift validation.
 

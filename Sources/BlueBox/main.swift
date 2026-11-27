@@ -6,7 +6,7 @@ import Glibc
 import Darwin
 #endif
 
-let usage = "Usage: bluebox [--max-instructions N] [--entry main|init|term] <PEF-or-MacBinary-path>"
+let usage = "Usage: bluebox [--max-instructions N] [--entry main|init|term] [--framebuffer output.ppm] <PEF-or-MacBinary-path>"
 let arguments = Array(CommandLine.arguments.dropFirst())
 if arguments.contains("--help") || arguments.contains("-h") {
     print(usage)
@@ -17,10 +17,11 @@ do {
     var path: String?
     var limit = 100_000
     var entry = BlueBoxEntry.main
+    var framebufferPath: String?
     var index = 0
     while index < arguments.count {
         let argument = arguments[index]
-        if argument == "--max-instructions" || argument == "--entry" {
+        if argument == "--max-instructions" || argument == "--entry" || argument == "--framebuffer" {
             index += 1
             guard index < arguments.count else { throw BlueBoxError.invalidArguments(usage) }
             if argument == "--max-instructions" {
@@ -28,6 +29,8 @@ do {
                     throw BlueBoxError.invalidArguments("Instruction limit must be a positive integer")
                 }
                 limit = value
+            } else if argument == "--framebuffer" {
+                framebufferPath = arguments[index]
             } else {
                 guard let value = BlueBoxEntry(rawValue: arguments[index]) else {
                     throw BlueBoxError.invalidArguments("Entry must be main, init, or term")
@@ -44,11 +47,16 @@ do {
     let application = try BlueBoxApplication.load(path: path)
     let report = try application.dataFork.withUnsafeBytes { bytes in
         try BlueBoxRunner.run(bytes: bytes, resourceFork: application.resourceFork,
+                             captureFramebuffer: framebufferPath != nil,
                              entry: entry, maxInstructions: limit)
     }
     print("Loaded \(report.sectionCount) sections; entry=\(hex(report.codeAddress)), toc=\(hex(report.toc)), sp=\(hex(report.initialStackPointer))")
     print(report.diagnostic)
     print("Serviced \(report.handledImportCount) Toolbox imports")
+    if let framebufferPath, let ppm = report.framebufferPPM {
+        try Data(ppm).write(to: URL(fileURLWithPath: framebufferPath))
+        print("Framebuffer written to \(framebufferPath)")
+    }
     switch report.execution.stop {
     case .returned: exit(0)
     case .instructionLimit: exit(124)

@@ -43,8 +43,12 @@ editing, hooks, scrap resizing, and system clipboard transfer remain pending.
 and the default dialog font. `SetDialogFont`/`SetDAFont` and `ParamText` update per-run state;
 Pascal-string reads are range checked and copied. Dialog creation, modal handling, alert
 audio, and guest callback invocation remain pending.
-MacGzip now passes the initial Toolbox setup and cursor initialization, reaching
-`InterfaceLib:MaxApplZone` after 139 instructions.
+A bounded 16 MiB application heap supports `MaxApplZone`, `MoreMasters`, pointer/handle
+allocation and clearing, disposal, size queries, `FreeMem`, and `MemError`. Master pointers
+are guest addresses; freed blocks coalesce for reuse. Resizing, compaction, purging, locking,
+grow-zone callbacks, and separate system zones remain pending. CPU access checks cover the
+heap mapping rather than individual allocation lifetimes.
+MacGzip now passes initial heap setup, reaching `InterfaceLib:Gestalt` after 168 instructions.
 Further Toolbox dispatch and full application startup remain pending, as do Linux/ppc32
 and Embedded Swift validation.
 

@@ -57,7 +57,11 @@ or MacBinary archives. `GetIndString` uses Graphite's `STR#` reader and copies a
 Pascal string to guest memory; `ResError` reports missing or malformed resource errors.
 Missing resources and out-of-range indexes produce empty strings. Only the application's
 read-only resource fork is connected; resource handles, file chains, and writes remain pending.
-MacGzip now reads its first resource string, reaching `InterfaceLib:p2cstr` after 202 instructions.
+Pascal/C string conversions support in-place and copying variants, their legacy aliases,
+overlapping buffers, and checked guest reads/writes. Conversion preserves bytes and bounds
+C-to-Pascal strings at 255 bytes.
+MacGzip now converts its first resource string, reaching `InterfaceLib:BlockMoveData`
+after 801 instructions.
 Further Toolbox dispatch and full application startup remain pending, as do Linux/ppc32
 and Embedded Swift validation.
 

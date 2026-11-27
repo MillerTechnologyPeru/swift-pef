@@ -17,6 +17,10 @@ final class GuestAppleEventHandlers {
         ))
     }
 
+    func handler(for event: AppleEvent) -> AppleEventDispatcher.Entry? {
+        dispatcher.handler(eventClass: event.eventClass, eventID: event.eventID)
+    }
+
     func entry(eventClass: UInt32, eventID: UInt32, isSystem: Bool) -> AppleEventDispatcher.Entry? {
         dispatcher.entry(eventClass: FourCharCode(eventClass), eventID: FourCharCode(eventID), isSystem: isSystem)
     }

@@ -242,6 +242,29 @@ import Testing
         #expect(report.handledImportCount == 2)
     }
 
+    @Test func guestGestaltCallWritesResponseAndReportsErrors() throws {
+        for scenario in 0..<3 {
+            let selector: UInt32 = scenario == 1 ? 0x7174696D : 0x73797361 // qtim or sysa
+            var code: [UInt32] = [0x7FC802A6, 0x3BE20028,
+                                  0x3C600000 | (selector >> 16), 0x60630000 | (selector & 0xFFFF)]
+            code += [scenario == 2 ? 0x38800000 : 0x389F0000,
+                     0x81820004, 0x800C0000, 0x804C0004, 0x7C0903A6, 0x4E800421]
+            if scenario == 0 { code += [0x807F0000] }
+            code += [0x7FC803A6, 0x4E800020]
+            let report = try executable(code, imported: true, importedSymbol: "Gestalt").withUnsafeBytes {
+                try BlueBoxRunner.run(bytes: $0)
+            }
+            if scenario == 2 {
+                #expect(report.execution.stop == .memoryFault(address: 0, write: true))
+                #expect(report.handledImportCount == 0)
+            } else {
+                #expect(report.execution.stop == .returned)
+                #expect(Int32(bitPattern: report.execution.r3) == (scenario == 0 ? 2 : -5551))
+                #expect(report.handledImportCount == 1)
+            }
+        }
+    }
+
     @Test func initGrafRejectsReadOnlyGuestDestination() throws {
         // Pass thePort=code+126, making InitGraf's first write target the code section.
         let code: [UInt32] = [0x3C600100, 0x3863007E,
@@ -288,8 +311,8 @@ import Testing
             return
         }
         #expect(report.imports[Int(index)].library == "InterfaceLib")
-        #expect(report.imports[Int(index)].symbol == "Gestalt")
-        #expect(report.handledImportCount == 11)
-        #expect(report.execution.instructions == 168)
+        #expect(report.imports[Int(index)].symbol == "GetIndString")
+        #expect(report.handledImportCount == 12)
+        #expect(report.execution.instructions == 193)
     }
 }

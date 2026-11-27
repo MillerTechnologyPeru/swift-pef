@@ -52,7 +52,7 @@ Reference specifications:
 Validation includes synthetic format fixtures, native macOS xattr tests, and 30 local real-file
 cases: preparation/export lookup/entry-vector relocation for 15 PowerPC PEF payloads and resource
 parsing for their 15 AppleDouble sidecars. Payloads include MacGzip 1.1.3, MacZip 1.06, BBEdit Lite's
-Classic and Carbon variants, and eleven BBEdit plug-ins. The full suite passes 191 cases.
+Classic and Carbon variants, and eleven BBEdit plug-ins. The full suite passes 198 cases.
 Real-file tests use placeholder import addresses and never execute guest code. They use
 `.build/fixtures` by default, allow `PEF_FIXTURES_DIR` to override the directory, and are disabled
 when `manifest.json` is absent. Download provenance and hashes remain in the local manifest.
@@ -138,6 +138,12 @@ export its monochrome framebuffer as RGB PPM using --framebuffer. Tests cover re
 truncation, unsupported stages/items/filters, substitution, pixels, snapshot output, and the
 real MacGzip error message. Modal input, resumption, alert icons/audio, other stages/items,
 and guest filters remain pending.
+AppleEvent handler installation, exact lookup, replacement, and removal use Graphite's
+separate application/system dispatch tables. Guest UPPs remain opaque addresses, and lookup
+writes procedure/refcon values through checked big-endian guest memory. Tests cover table
+isolation, signed errors, invalid outputs, wildcard lookup, and interpreted guest registration.
+Descriptor marshaling and guest callback execution remain pending; the evnt Gestalt selector
+remains undefined, and MacGzip's compatibility alert is unchanged.
 Unknown libraries, symbols, and other data imports remain explicit failures. Further Toolbox
 dispatch, complete application startup, Linux/ppc32 cross-platform tests, and Embedded
 Swift validation remain outstanding.

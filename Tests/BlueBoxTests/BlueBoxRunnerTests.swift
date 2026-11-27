@@ -18,6 +18,7 @@ import Graphite
                             importedSymbol: String = "UnknownToolboxCall", importedClass: UInt32 = 2,
                             secondaryImport: String? = nil, additionalImports: [String] = [],
                             callbackOffset: UInt32? = nil,
+                            fileSpec: FileSpec? = nil,
                             entryOffset: UInt32 = 0) -> [UInt8] {
         let code = instructions.flatMap(be32)
         let dataOffset = (128 + code.count + 15) / 16 * 16
@@ -67,7 +68,33 @@ import Graphite
             bytes.replaceSubrange(dataOffset + 48..<dataOffset + 56,
                                   with: be32(0x01000000 + callbackOffset) + be32(0))
         }
+        if let fileSpec {
+            bytes.replaceSubrange(dataOffset + 64..<dataOffset + 134, with: GuestFileManager.bytes(fileSpec))
+        }
         return bytes + loader
+    }
+
+    @Test func guestOpensReadsAndClosesAMountedFile() throws {
+        func invoke(_ offset: UInt32) -> [UInt32] {
+            [0x81820000 | offset, 0x800C0000, 0x804C0004, 0x7C0903A6, 0x4E800421]
+        }
+        let name = PascalString(bytes: Array("Fixture".utf8))
+        let spec = FileSpec(volume: -100, parent: .root, name: name)
+        var code: [UInt32] = [0x7FC802A6, 0x7C5F1378, 0x38620038, 0x38800001, 0x38A20088]
+        code += invoke(4) // FSpOpenDF(&spec, fsRdPerm, &refNum)
+        code += [0x7FE2FB78, 0xA0620088, 0x38000006, 0x9002008C, 0x3882008C, 0x38A20090]
+        code += invoke(8) // FSRead(refNum, &count, buffer), requesting more than EOF
+        code += [0x7FE2FB78, 0xA0620088]
+        code += invoke(12) // FSClose(refNum)
+        code += [0x7FE2FB78, 0x80620090, 0x7FC803A6, 0x4E800020]
+        let bytes = executable(code, imported: true, importedSymbol: "FSpOpenDF",
+                               secondaryImport: "FSRead", additionalImports: ["FSClose"], fileSpec: spec)
+        let report = try bytes.withUnsafeBytes {
+            try BlueBoxRunner.run(bytes: $0, files: [GuestFile(name: name, dataFork: [1, 2, 3, 4])])
+        }
+        #expect(report.execution.stop == .returned)
+        #expect(report.execution.r3 == 0x01020304)
+        #expect(report.handledImportCount == 3)
     }
 
     @Test func guestCreatesPopulatesAndCountsAnAppleEventList() throws {

@@ -18,7 +18,7 @@ import Graphite
                             importedSymbol: String = "UnknownToolboxCall", importedClass: UInt32 = 2,
                             secondaryImport: String? = nil, additionalImports: [String] = [],
                             callbackOffset: UInt32? = nil,
-                            fileSpec: FileSpec? = nil,
+                            fileSpec: FileSpec? = nil, initializerOffset: UInt32? = nil,
                             entryOffset: UInt32 = 0) -> [UInt8] {
         let code = instructions.flatMap(be32)
         let dataOffset = (128 + code.count + 15) / 16 * 16
@@ -32,7 +32,7 @@ import Graphite
         let stringsOffset = relocationOffset + relocations.count * 2
         let hashOffset = (stringsOffset + strings.count + 3) / 4 * 4
         var loader: [UInt8] = []
-        for word: UInt32 in [1, 0, 0xFFFFFFFF, 0, 0xFFFFFFFF, 0,
+        for word: UInt32 in [1, 0, initializerOffset == nil ? 0xFFFFFFFF : 1, initializerOffset == nil ? 0 : 56, 0xFFFFFFFF, 0,
                               imported ? 1 : 0, UInt32(names.count), 1,
                               UInt32(relocationOffset), UInt32(stringsOffset), UInt32(hashOffset), 0, 0] {
             loader += be32(word)
@@ -68,10 +68,66 @@ import Graphite
             bytes.replaceSubrange(dataOffset + 48..<dataOffset + 56,
                                   with: be32(0x01000000 + callbackOffset) + be32(0))
         }
+        if let initializerOffset {
+            bytes.replaceSubrange(dataOffset + 56..<dataOffset + 64,
+                                  with: be32(0x01000000 + initializerOffset) + be32(0))
+        }
         if let fileSpec {
             bytes.replaceSubrange(dataOffset + 64..<dataOffset + 134, with: GuestFileManager.bytes(fileSpec))
         }
         return bytes + loader
+    }
+
+    @Test(arguments: [false, true]) func initializesFragmentBeforeMainWithTheCorrectLocator(onDisk: Bool) throws {
+        let name = PascalString(bytes: Array("Application".utf8))
+        // Init copies the first word at the locator's address into shared guest memory.
+        let code: [UInt32] = [0x3C804000, 0x80640000, 0x4E800020,
+                              0x80830010, 0x80840000, 0x3CA04000, 0x90850000, 0x38600000, 0x4E800020]
+        let bytes = executable(code, initializerOffset: 12)
+        let file = GuestFile(name: name, dataFork: bytes)
+        let report = try bytes.withUnsafeBytes {
+            try BlueBoxRunner.run(bytes: $0, applicationFile: onDisk ? file : nil)
+        }
+        #expect(report.execution.stop == .returned)
+        #expect(report.executionEntry == .main)
+        #expect(report.execution.r3 == (onDisk ? 0xFF9C0000 : 0x4A6F7921))
+        #expect(report.execution.instructions == 9)
+        #expect(report.execution.toc == report.toc)
+        let limited = try bytes.withUnsafeBytes { try BlueBoxRunner.run(bytes: $0, maxInstructions: 8) }
+        #expect(limited.execution.stop == .instructionLimit)
+        #expect(limited.executionEntry == .main)
+        #expect(limited.execution.instructions == 8)
+        let explicit = try bytes.withUnsafeBytes { try BlueBoxRunner.run(bytes: $0, entry: .initialize) }
+        #expect(explicit.execution.stop == .returned)
+        #expect(explicit.executionEntry == .initialize)
+        #expect(explicit.execution.instructions == 6)
+    }
+
+    @Test func failedOrLoopingInitializerPreventsMainExecution() throws {
+        let failed = executable([0, 0x3860FFCE, 0x4E800020], initializerOffset: 4)
+        let report = try failed.withUnsafeBytes { try BlueBoxRunner.run(bytes: $0) }
+        #expect(report.execution.stop == .initializationFailed(-50))
+        #expect(report.executionEntry == .initialize)
+        #expect(report.execution.instructions == 2)
+        #expect(report.diagnostic.contains("initialization failed with OSErr -50"))
+        let looping = executable([0, 0x48000000], initializerOffset: 4)
+        let limited = try looping.withUnsafeBytes { try BlueBoxRunner.run(bytes: $0, maxInstructions: 5) }
+        #expect(limited.execution.stop == .instructionLimit)
+        #expect(limited.executionEntry == .initialize)
+        #expect(limited.execution.instructions == 5)
+    }
+
+    @Test func initializerAndMainShareToolboxHeapState() throws {
+        // Direct code imports need no TOC; init allocates 32 bytes, main reports the remaining heap.
+        let main: [UInt32] = [0x7FC802A6, 0x3D80F000, 0x618C0004, 0x7D8903A6, 0x4E800421, 0x7FC803A6, 0x4E800020]
+        let initialize: [UInt32] = [0x7FC802A6, 0x38600020, 0x3D80F000, 0x7D8903A6,
+                                    0x4E800421, 0x38600000, 0x7FC803A6, 0x4E800020]
+        let bytes = executable(main + initialize, imported: true, importedSymbol: "NewPtr", importedClass: 0,
+                               secondaryImport: "FreeMem", initializerOffset: UInt32(main.count * 4))
+        let report = try bytes.withUnsafeBytes { try BlueBoxRunner.run(bytes: $0) }
+        #expect(report.execution.stop == .returned)
+        #expect(report.execution.r3 == GuestHeap.byteCount - 32)
+        #expect(report.handledImportCount == 2)
     }
 
     @Test func guestOpensReadsAndClosesAMountedFile() throws {

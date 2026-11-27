@@ -36,8 +36,11 @@ with packed guest GrafPort and region handles. `GetWMgrPort` returns its guest a
 `InitMenus` creates headless menu state and draws an empty 20-pixel Roman-script menu bar
 through Graphite. `DrawMenuBar`, `ClearMenuBar`, and `GetMBarHeight` support that initial state;
 resource menus, menu tracking, and menu color resources remain pending.
-MacGzip now passes initialization through `InitMenus`, reaching `InterfaceLib:TEInit`
-after 114 instructions.
+`TEInit` creates an empty private-scrap handle in guest memory; `TEScrapHandle`,
+`TEGetScrapHandle`, and `TEGetScrapLength` expose that initial state. TextEdit records,
+editing, hooks, scrap resizing, and system clipboard transfer remain pending.
+MacGzip now passes initialization through `TEInit`, reaching `InterfaceLib:InitDialogs`
+after 123 instructions.
 Further Toolbox dispatch and full application startup remain pending, as do Linux/ppc32
 and Embedded Swift validation.
 

@@ -1,7 +1,7 @@
 import CMORA
 import Graphite
 
-struct ToolboxMemoryFault: Equatable {
+struct ToolboxMemoryFault: Error, Equatable {
     let address: UInt32
     let write: Bool
 }
@@ -50,6 +50,30 @@ struct ToolboxRuntime {
             return false
         }
         switch symbol.symbol {
+        case "p2cstr", "P2CStr", "c2pstr", "C2PStr",
+             "p2cstrcpy", "c2pstrcpy", "CopyPascalStringToC", "CopyCStringToPascal":
+            guard let readGuest, let writeGuest else { return false }
+            let arguments = withUnsafeBytes(of: frame.gpr) { bytes in
+                let registers = bytes.bindMemory(to: UInt32.self)
+                return (registers[0], registers[1])
+            }
+            let inPlace = ["p2cstr", "P2CStr", "c2pstr", "C2PStr"].contains(symbol.symbol)
+            let destinationFirst = symbol.symbol == "p2cstrcpy" || symbol.symbol == "c2pstrcpy"
+            let source = destinationFirst ? arguments.1 : arguments.0
+            let destination = inPlace ? arguments.0 : (destinationFirst ? arguments.0 : arguments.1)
+            do {
+                if ["p2cstr", "P2CStr", "p2cstrcpy", "CopyPascalStringToC"].contains(symbol.symbol) {
+                    try GuestStringConversion.pascalToC(source: source, destination: destination,
+                                                       read: readGuest, write: writeGuest)
+                } else {
+                    try GuestStringConversion.cToPascal(source: source, destination: destination,
+                                                       read: readGuest, write: writeGuest)
+                }
+                if inPlace { frame.returnGPR = arguments.0 }
+            } catch {
+                guestMemoryFault = error
+                return false
+            }
         case "GetIndString":
             guard let writeGuest else { return false }
             let arguments = withUnsafeBytes(of: frame.gpr) { bytes in

@@ -52,7 +52,7 @@ Reference specifications:
 Validation includes synthetic format fixtures, native macOS xattr tests, and 30 local real-file
 cases: preparation/export lookup/entry-vector relocation for 15 PowerPC PEF payloads and resource
 parsing for their 15 AppleDouble sidecars. Payloads include MacGzip 1.1.3, MacZip 1.06, BBEdit Lite's
-Classic and Carbon variants, and eleven BBEdit plug-ins. The full suite passes 103 cases.
+Classic and Carbon variants, and eleven BBEdit plug-ins. The full suite passes 126 cases.
 Real-file tests use placeholder import addresses and never execute guest code. They use
 `.build/fixtures` by default, allow `PEF_FIXTURES_DIR` to override the directory, and are disabled
 when `manifest.json` is absent. Download provenance and hashes remain in the local manifest.
@@ -60,8 +60,25 @@ BlueBox now maps prepared sections into guest memory, initializes r1/r2 from a s
 entry TVector, and runs PPC32Core with a bounded instruction count and memory permissions.
 Execution tests cover returns, loops, unsupported opcodes/imports, invalid entry addresses,
 and memory faults. The Educate Quotes plug-in executes 15 instructions before an unmapped read;
-the CLI runs MacGzip for 72 instructions before stopping at `InterfaceLib:FlushEvents`.
-Toolbox dispatch, complete application startup, Linux/ppc32 cross-platform tests, and Embedded
+the CLI runs MacGzip for 106 instructions, servicing `FlushEvents`, `InitGraf`, `InitFonts`,
+and `InitWindows` before stopping at `InterfaceLib:InitMenus`.
+The initial per-run dispatcher bridges Graphite clocks and cursor state and implements
+FlushEvents mask/stop-mask queue filtering. Host input delivery, cursor presentation, and
+further QuickDraw operations still need integration. `InitGraf` writes the public globals
+relative to the caller's `thePort` pointer, supports the InterfaceLib `qd` data import, and
+uses a shared guest/Graphite 640×480 monochrome framebuffer. Tests cover packed field offsets,
+big-endian encoding, application-owned globals, read-only destinations, and shared pixels.
+Font initialization keeps a per-run Graphite registry and loads its built-in fallback once.
+Font ID/default-size queries and checked Pascal font-name writes are bridged; tests cover
+registry isolation, repeat initialization, unknown names, rejected destinations, and guest
+readback. Host font discovery, resource-font loading, and text rendering shims remain pending.
+Window Manager initialization creates a headless Graphite screen port and a guest-packed
+108-byte GrafPort with valid visible/clip-region master pointers and rectangular region records.
+GetWMgrPort returns its guest address; FrontWindow handles the initial empty window list.
+Tests verify field offsets, guest region-handle dereferencing, repeat initialization, and
+rejected output pointers. Window creation, desktop painting, and native presentation remain pending.
+Unknown libraries, symbols, and other data imports remain explicit failures. Further Toolbox
+dispatch, complete application startup, Linux/ppc32 cross-platform tests, and Embedded
 Swift validation remain outstanding.
 The phases below describe the larger runtime roadmap.
 

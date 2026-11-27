@@ -49,8 +49,20 @@ Reference specifications:
 - [Apple, AppleSingle/AppleDouble Developer's Note](https://nulib.com/library/AppleSingle_AppleDouble.pdf)
 - [MacBinary original I/II/III specifications, preserved mirror](https://github.com/mietek/theunarchiver/wiki/MacBinarySpecs)
 
-Validation uses synthetic format fixtures and native macOS xattr tests. Real application
-fixtures, Linux/ppc32 cross-platform tests, and Embedded Swift validation remain outstanding.
+Validation includes synthetic format fixtures, native macOS xattr tests, and 30 local real-file
+cases: preparation/export lookup/entry-vector relocation for 15 PowerPC PEF payloads and resource
+parsing for their 15 AppleDouble sidecars. Payloads include MacGzip 1.1.3, MacZip 1.06, BBEdit Lite's
+Classic and Carbon variants, and eleven BBEdit plug-ins. The full suite passes 103 cases.
+Real-file tests use placeholder import addresses and never execute guest code. They use
+`.build/fixtures` by default, allow `PEF_FIXTURES_DIR` to override the directory, and are disabled
+when `manifest.json` is absent. Download provenance and hashes remain in the local manifest.
+BlueBox now maps prepared sections into guest memory, initializes r1/r2 from a stack and the
+entry TVector, and runs PPC32Core with a bounded instruction count and memory permissions.
+Execution tests cover returns, loops, unsupported opcodes/imports, invalid entry addresses,
+and memory faults. The Educate Quotes plug-in executes 15 instructions before an unmapped read;
+the CLI runs MacGzip for 72 instructions before stopping at `InterfaceLib:FlushEvents`.
+Toolbox dispatch, complete application startup, Linux/ppc32 cross-platform tests, and Embedded
+Swift validation remain outstanding.
 The phases below describe the larger runtime roadmap.
 
 ## 1. Overview & Target Platforms

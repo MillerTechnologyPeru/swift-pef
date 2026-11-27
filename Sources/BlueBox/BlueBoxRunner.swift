@@ -1,5 +1,6 @@
 import PEFKit
 import PPC32Core
+import Graphite
 
 enum BlueBoxEntry: String {
     case main
@@ -60,7 +61,8 @@ func hex(_ value: UInt32) -> String {
 enum BlueBoxRunner {
     /// Executes one selected PEF entry with per-run Toolbox state. Init/term sequencing is separate.
     static func run(
-        bytes: UnsafeRawBufferPointer, entry: BlueBoxEntry = .main, maxInstructions: Int = 100_000
+        bytes: UnsafeRawBufferPointer, resourceFork: [UInt8]? = nil,
+        entry: BlueBoxEntry = .main, maxInstructions: Int = 100_000
     ) throws -> BlueBoxRunReport {
         let container = try PEFContainer(bytes: bytes)
         guard let loader = try container.loaderSection() else { throw BlueBoxError.missingEntry(entry.rawValue) }
@@ -174,7 +176,9 @@ enum BlueBoxRunner {
                                         byteCount: GuestTextEdit.byteCount, writable: true))
         try memory.commit(at: GuestHeap.address, byteCount: Int(GuestHeap.byteCount))
         regions.append(PPC32MemoryRegion(address: GuestHeap.address, byteCount: GuestHeap.byteCount, writable: true))
-        var toolbox = ToolboxRuntime(screenPixels: memory.hostPointer(for: GuestQuickDrawGlobals.screenAddress))
+        let resources = try resourceFork.map { try ResourceFile(bytes: $0) }
+        var toolbox = ToolboxRuntime(screenPixels: memory.hostPointer(for: GuestQuickDrawGlobals.screenAddress),
+                                     resources: resources)
         var execution = regions.withUnsafeBufferPointer { regions in
             EmulatedPPCBackend.call(
                 codeAddress: code, toc: toc, stackPointer: stackPointer,

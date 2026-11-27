@@ -52,7 +52,7 @@ Reference specifications:
 Validation includes synthetic format fixtures, native macOS xattr tests, and 30 local real-file
 cases: preparation/export lookup/entry-vector relocation for 15 PowerPC PEF payloads and resource
 parsing for their 15 AppleDouble sidecars. Payloads include MacGzip 1.1.3, MacZip 1.06, BBEdit Lite's
-Classic and Carbon variants, and eleven BBEdit plug-ins. The full suite passes 139 cases.
+Classic and Carbon variants, and eleven BBEdit plug-ins. The full suite passes 148 cases.
 Real-file tests use placeholder import addresses and never execute guest code. They use
 `.build/fixtures` by default, allow `PEF_FIXTURES_DIR` to override the directory, and are disabled
 when `manifest.json` is absent. Download provenance and hashes remain in the local manifest.
@@ -60,8 +60,8 @@ BlueBox now maps prepared sections into guest memory, initializes r1/r2 from a s
 entry TVector, and runs PPC32Core with a bounded instruction count and memory permissions.
 Execution tests cover returns, loops, unsupported opcodes/imports, invalid entry addresses,
 and memory faults. The Educate Quotes plug-in executes 15 instructions before an unmapped read;
-the CLI runs MacGzip for 139 instructions, servicing eight Toolbox calls through dialog
-and cursor initialization before stopping at `InterfaceLib:MaxApplZone`.
+the CLI runs MacGzip for 168 instructions, servicing eleven Toolbox calls through initial
+heap setup before stopping at `InterfaceLib:Gestalt`.
 The initial per-run dispatcher bridges Graphite clocks and cursor state and implements
 FlushEvents mask/stop-mask queue filtering. Host input delivery, cursor presentation, and
 further QuickDraw operations still need integration. `InitGraf` writes the public globals
@@ -92,6 +92,13 @@ ParamText copies all four checked Pascal strings before publishing the new value
 faults now distinguish reads from writes. Tests cover valid/invalid guest calls, truncated
 strings, MacRoman bytes, font aliases, and state isolation. Dialog creation, modal handling,
 alert audio, and guest resume callback execution remain pending.
+A fixed 16 MiB guest application zone backs first-fit pointer/handle allocations, logical
+size queries, clearing, disposal, free-memory/error queries, and master-pointer pools in
+64-entry blocks. MaxApplZone uses the already expanded zone. Free ranges coalesce; master
+pointers remain stable. Tests cover exhaustion, zero-size allocations, master-pool growth,
+reuse, invalid block kinds, failed-write rollback, guest pointer/handle access, and signed
+MemError results. Resizing, compaction, purging, locking, callbacks, and system zones remain
+pending. CPU memory permissions cover the whole heap mapping, not allocation lifetimes.
 Unknown libraries, symbols, and other data imports remain explicit failures. Further Toolbox
 dispatch, complete application startup, Linux/ppc32 cross-platform tests, and Embedded
 Swift validation remain outstanding.

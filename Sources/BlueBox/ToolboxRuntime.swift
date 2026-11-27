@@ -29,6 +29,7 @@ struct ToolboxRuntime {
     private let resources: ResourceFile?
     private(set) var lastResourceError: Int32 = 0
     private var resourceHandles: [GuestResourceKey: UInt32] = [:]
+    private(set) var pendingAlert: GuestAlert?
 
     /// Low-level event kinds in chronological order; host input delivery is still pending.
     var pendingEventKinds: [UInt16] = []
@@ -56,6 +57,22 @@ struct ToolboxRuntime {
             return false
         }
         switch symbol.symbol {
+        case "StopAlert":
+            guard let resources, let dialogs, let screen = quickDraw.mainDevice else { return false }
+            let arguments = withUnsafeBytes(of: frame.gpr) { bytes in
+                let registers = bytes.bindMemory(to: UInt32.self)
+                return (Int16(truncatingIfNeeded: registers[0]), registers[1])
+            }
+            guard arguments.1 == 0 else { return false } // A guest filter requires callback execution.
+            do {
+                let alert = try GuestAlert(id: arguments.0, resources: resources, parameters: dialogs.parameterText)
+                alert.draw(on: screen, fonts: initializeFonts(), font: dialogs.font)
+                pendingAlert = alert
+                return false // Suspend at the import; do not return an invented item number.
+            } catch {
+                lastResourceError = error.code
+                return false
+            }
         case "GetResource", "Get1Resource", "GetString":
             guard let writeGuest else { return false }
             let arguments = withUnsafeBytes(of: frame.gpr) { bytes in

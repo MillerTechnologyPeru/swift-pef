@@ -75,6 +75,11 @@ struct GuestFileManager {
 
     mutating func seek(_ reference: Int16, mode: UInt16, offset: Int32) throws(MacError) {
         guard var fork = forks[reference] else { throw .referenceNumber }
+        fork.mark = try positionedMark(fork, mode: mode, offset: offset)
+        forks[reference] = fork
+    }
+
+    private func positionedMark(_ fork: OpenFork, mode: UInt16, offset: Int32) throws(MacError) -> Int {
         guard mode <= 3 else { throw .parameter }
         let mark: Int64
         switch ForkPosition(mode: mode, offset: Int64(offset)) {
@@ -84,18 +89,23 @@ struct GuestFileManager {
         }
         guard mark >= 0 else { throw .position }
         guard mark <= fork.bytes.count else { throw .endOfFile }
-        fork.mark = Int(mark)
-        forks[reference] = fork
+        return Int(mark)
     }
 
     /// Commit the mark only after checked guest output succeeds.
     mutating func read(_ reference: Int16, count: Int32,
                        output: ([UInt8]) throws -> Void) throws -> Bool {
+        try readPositioned(reference, count: count, mode: 0, offset: 0) { bytes, _ in try output(bytes) }
+    }
+
+    mutating func readPositioned(_ reference: Int16, count: Int32, mode: UInt16, offset: Int32,
+                                output: ([UInt8], UInt32) throws -> Void) throws -> Bool {
         guard var fork = forks[reference] else { throw MacError.referenceNumber }
         guard count >= 0 else { throw MacError.parameter }
+        fork.mark = try positionedMark(fork, mode: mode, offset: offset)
         let actual = min(Int(count), fork.bytes.count - fork.mark)
         let bytes = Array(fork.bytes[fork.mark..<fork.mark + actual])
-        try output(bytes)
+        try output(bytes, UInt32(fork.mark + actual))
         fork.mark += actual
         forks[reference] = fork
         return actual < Int(count)

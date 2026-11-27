@@ -312,6 +312,19 @@ import Graphite
         }
     }
 
+    @Test func guestDereferencesLoadedResourceHandle() throws {
+        let resources = try ResourceMap.write([(resource: Resource(type: "TEST", id: -7), bytes: [1, 2, 3, 4])])
+        let code: [UInt32] = [0x7FC802A6, 0x3C605445, 0x60635354, 0x3880FFF9,
+                              0x81820004, 0x800C0000, 0x804C0004, 0x7C0903A6, 0x4E800421,
+                              0x80630000, 0x80630000, 0x7FC803A6, 0x4E800020]
+        let report = try executable(code, imported: true, importedSymbol: "GetResource").withUnsafeBytes {
+            try BlueBoxRunner.run(bytes: $0, resourceFork: resources)
+        }
+        #expect(report.execution.stop == .returned)
+        #expect(report.execution.r3 == 0x01020304)
+        #expect(report.handledImportCount == 1)
+    }
+
     @Test func initGrafRejectsReadOnlyGuestDestination() throws {
         // Pass thePort=code+126, making InitGraf's first write target the code section.
         let code: [UInt32] = [0x3C600100, 0x3863007E,
@@ -361,8 +374,8 @@ import Graphite
             return
         }
         #expect(report.imports[Int(index)].library == "InterfaceLib")
-        #expect(report.imports[Int(index)].symbol == "GetResource")
-        #expect(report.handledImportCount == 15)
-        #expect(report.execution.instructions == 1426)
+        #expect(report.imports[Int(index)].symbol == "StopAlert")
+        #expect(report.handledImportCount == 19)
+        #expect(report.execution.instructions == 1513)
     }
 }

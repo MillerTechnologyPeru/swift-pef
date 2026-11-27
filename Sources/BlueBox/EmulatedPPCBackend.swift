@@ -24,6 +24,17 @@ struct PPCExecutionReport {
     let instructions: UInt64
 }
 
+/// Shared across the outer invocation and its callbacks, including synthetic trap steps.
+final class GuestInstructionBudget {
+    var remaining: Int
+    init(_ limit: Int) { remaining = max(0, limit) }
+}
+
+struct GuestPPCInvocation {
+    let vector: UInt32
+    let arguments: [UInt32]
+}
+
 enum EmulatedPPCBackend {
     enum CallbackError: Error, Equatable {
         case invalidVector
@@ -36,6 +47,7 @@ enum EmulatedPPCBackend {
         at vector: UInt32, arguments: [UInt32], stackPointer: UInt32,
         in memory: borrowing GuestAddressSpace, maxInstructions: Int,
         memoryRegions: UnsafeBufferPointer<PPC32MemoryRegion>,
+        budget: GuestInstructionBudget? = nil,
         dispatchImport: (UInt32, inout MORAInvocationFrame) -> Bool
     ) throws(CallbackError) -> PPCExecutionReport {
         guard arguments.count <= 8 else { throw .tooManyArguments }
@@ -55,7 +67,7 @@ enum EmulatedPPCBackend {
         memory.writeBigEndian(toc, at: stackPointer + 20)
         return call(codeAddress: code, toc: toc, stackPointer: stackPointer,
                     in: memory, maxInstructions: maxInstructions, memoryRegions: memoryRegions,
-                    configure: { state in
+                    budget: budget, configure: { state in
                         for (index, argument) in arguments.enumerated() { state.gpr[index + 3] = argument }
                     }, dispatchImport: dispatchImport)
     }
@@ -68,9 +80,13 @@ enum EmulatedPPCBackend {
         in memory: borrowing GuestAddressSpace,
         maxInstructions: Int,
         memoryRegions: UnsafeBufferPointer<PPC32MemoryRegion>? = nil,
+        budget: GuestInstructionBudget? = nil,
         configure: (inout PPC32State) -> Void = { _ in },
+        takeCallback: () -> GuestPPCInvocation? = { nil },
+        completeCallback: () -> Void = {},
         dispatchImport: (UInt32, inout MORAInvocationFrame) -> Bool
     ) -> PPCExecutionReport {
+        let budget = budget ?? GuestInstructionBudget(maxInstructions)
         var fault = UInt64.max
         return withUnsafeMutablePointer(to: &fault) { fault in
             var state = PPC32State(memoryBase: memory.basePointer)
@@ -81,7 +97,8 @@ enum EmulatedPPCBackend {
             configure(&state)
             state.memoryRegions = memoryRegions
             state.memoryFault = fault
-            for _ in 0..<max(0, maxInstructions) {
+            while budget.remaining > 0 {
+                budget.remaining -= 1
                 let instructionPC = state.pc
                 if instructionPC < PPC32State.importTrapBase {
                     let executable = memoryRegions.map { regions in
@@ -114,6 +131,35 @@ enum EmulatedPPCBackend {
                     frame.callerSP = state.gpr[1]
                     guard dispatchImport(state.importSymbolIndex, &frame) else {
                         return report(state, result: result, stop: .unsupportedImport(state.importSymbolIndex))
+                    }
+                    if let callback = takeCallback() {
+                        guard let memoryRegions, state.gpr[1] >= 256 else {
+                            completeCallback()
+                            return report(state, result: result, stop: .memoryFault(address: state.gpr[1], write: true))
+                        }
+                        let callbackStack = (state.gpr[1] - 256) & ~UInt32(15)
+                        do {
+                            let child = try callVector(at: callback.vector, arguments: callback.arguments,
+                                stackPointer: callbackStack, in: memory,
+                                maxInstructions: budget.remaining,
+                                memoryRegions: memoryRegions, budget: budget, dispatchImport: dispatchImport)
+                            let total = state.timeBase + child.instructions
+                            completeCallback()
+                            guard child.stop == .returned else {
+                                return PPCExecutionReport(result: child.result, stop: child.stop, pc: child.pc,
+                                    lr: child.lr, stackPointer: child.stackPointer, toc: child.toc,
+                                    r3: child.r3, f1: child.f1, instructions: total)
+                            }
+                            state.timeBase = total
+                            // AppleEvent handlers return a signed 16-bit OSErr.
+                            frame.returnGPR = UInt32(bitPattern: Int32(Int16(truncatingIfNeeded: child.r3)))
+                        } catch {
+                            completeCallback()
+                            let invalidVector = (error as? CallbackError) == .invalidVector
+                            let address = invalidVector ? callback.vector : callbackStack
+                            return report(state, result: result,
+                                          stop: .memoryFault(address: address, write: !invalidVector))
+                        }
                     }
                     state.gpr[3] = frame.returnGPR
                     state.gpr[4] = frame.returnGPR2

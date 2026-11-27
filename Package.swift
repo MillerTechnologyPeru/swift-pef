@@ -8,6 +8,7 @@ import PackageDescription
 // The initial Window Manager port also exposes packed guest records and region handles.
 // The headless Menu Manager draws its initial empty bar into the shared screen.
 // TextEdit initialization owns a guest master pointer for its empty private scrap.
+// Dialog defaults and substitution strings stay per-run, with checked guest reads.
 // PEFKit is Foundation-free. CResourceIO isolates platform xattr calls from the format parsers.
 // Embedded Swift is not enabled or validated yet; it also needs BinaryParsingEmbedded.
 

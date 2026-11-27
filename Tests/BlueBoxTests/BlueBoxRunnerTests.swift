@@ -1,6 +1,7 @@
 import Foundation
 import Testing
 import Graphite
+import PEFKit
 @testable import BlueBox
 
 @Suite struct BlueBoxRunnerTests {
@@ -19,6 +20,7 @@ import Graphite
                             secondaryImport: String? = nil, additionalImports: [String] = [],
                             callbackOffset: UInt32? = nil,
                             fileSpec: FileSpec? = nil, initializerOffset: UInt32? = nil,
+                            exported: (name: String, section: Int16, offset: UInt32)? = nil,
                             entryOffset: UInt32 = 0) -> [UInt8] {
         let code = instructions.flatMap(be32)
         let dataOffset = (128 + code.count + 15) / 16 * 16
@@ -27,14 +29,16 @@ import Graphite
         let relocations: [UInt16] = imported
             ? [0x4600, 0x8003, 0x6000] + (secondaryImport == nil ? [] : [0x6001])
                 + (names.count > 2 ? (2..<names.count).map { UInt16(0x6000 + $0) } : []) : [0x4600]
-        let strings = imported ? Array(("InterfaceLib\0" + names.map { $0 + "\0" }.joined()).utf8) : []
+        var strings = imported ? Array(("InterfaceLib\0" + names.map { $0 + "\0" }.joined()).utf8) : []
+        let exportNameOffset = UInt32(strings.count)
+        if let exported { strings += Array(exported.name.utf8) }
         let relocationOffset = imported ? 92 + names.count * 4 : 68
         let stringsOffset = relocationOffset + relocations.count * 2
         let hashOffset = (stringsOffset + strings.count + 3) / 4 * 4
         var loader: [UInt8] = []
         for word: UInt32 in [1, 0, initializerOffset == nil ? 0xFFFFFFFF : 1, initializerOffset == nil ? 0 : 56, 0xFFFFFFFF, 0,
                               imported ? 1 : 0, UInt32(names.count), 1,
-                              UInt32(relocationOffset), UInt32(stringsOffset), UInt32(hashOffset), 0, 0] {
+                              UInt32(relocationOffset), UInt32(stringsOffset), UInt32(hashOffset), 0, exported == nil ? 0 : 1] {
             loader += be32(word)
         }
         if imported {
@@ -48,7 +52,11 @@ import Graphite
         loader += be16(1) + be16(0) + be32(UInt32(relocations.count)) + be32(0)
         loader += relocations.flatMap(be16) + strings
         while loader.count < hashOffset { loader.append(0) }
-        loader += be32(0)
+        if let exported {
+            let hash = Array(exported.name.utf8).withUnsafeBufferPointer { CFMHash.computeHashWord($0) }
+            loader += be32(1 << 18) + be32(hash)
+            loader += be32(1 << 24 | exportNameOffset) + be32(exported.offset) + be16(UInt16(bitPattern: exported.section))
+        } else { loader += be32(0) }
         var bytes: [UInt8] = []
         for word: UInt32 in [0x4A6F7921, 0x70656666, 0x70777063, 1, 0, 0, 0, 0] { bytes += be32(word) }
         bytes += be16(3) + be16(2) + be32(0)
@@ -75,7 +83,34 @@ import Graphite
         if let fileSpec {
             bytes.replaceSubrange(dataOffset + 64..<dataOffset + 134, with: GuestFileManager.bytes(fileSpec))
         }
+        if let exported {
+            let name = Array(exported.name.utf8)
+            bytes.replaceSubrange(dataOffset + 64..<dataOffset + 65 + name.count, with: [UInt8(name.count)] + name)
+        }
         return bytes + loader
+    }
+
+    @Test(arguments: [Int16(1), -2, -3]) func guestFindsPreparedSectionAbsoluteAndReexportedSymbols(section: Int16) throws {
+        let offset: UInt32 = section == 1 ? 8 : (section == -2 ? 0x12345678 : 0)
+        var code: [UInt32] = [0x7FC802A6, 0x7C5F1378, 0x38600001, 0x38820038, 0x38A20048, 0x38C2004C,
+                              0x81820004, 0x800C0000, 0x804C0004, 0x7C0903A6, 0x4E800421,
+                              0x7FE2FB78, 0x80620048]
+        if section == 1 { code += [0x80630000] }
+        code += [0x7FC803A6, 0x4E800020]
+        let bytes = executable(code, imported: true, importedSymbol: "FindSymbol",
+                               exported: ("Answer", section, offset))
+        let report = try bytes.withUnsafeBytes { try BlueBoxRunner.run(bytes: $0) }
+        #expect(report.execution.stop == .returned)
+        #expect(report.execution.r3 == (section == 1 ? 42 : (section == -2 ? 0x12345678 : 0x20000000)))
+        #expect(report.handledImportCount == 1)
+    }
+
+    @Test func rejectsAnExportOutsideItsInstantiatedSection() throws {
+        let bytes = executable([0x4E800020], exported: ("Invalid", 1, 257))
+        do {
+            _ = try bytes.withUnsafeBytes { try BlueBoxRunner.run(bytes: $0) }
+            Issue.record("Expected a malformed loader error for an out-of-range export")
+        } catch PEFError.malformedLoaderSection { }
     }
 
     @Test(arguments: [false, true]) func initializesFragmentBeforeMainWithTheCorrectLocator(onDisk: Bool) throws {

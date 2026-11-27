@@ -52,7 +52,7 @@ Reference specifications:
 Validation includes synthetic format fixtures, native macOS xattr tests, and 30 local real-file
 cases: preparation/export lookup/entry-vector relocation for 15 PowerPC PEF payloads and resource
 parsing for their 15 AppleDouble sidecars. Payloads include MacGzip 1.1.3, MacZip 1.06, BBEdit Lite's
-Classic and Carbon variants, and eleven BBEdit plug-ins. The full suite passes 199 cases.
+Classic and Carbon variants, and eleven BBEdit plug-ins. The full suite passes 207 cases.
 Real-file tests use placeholder import addresses and never execute guest code. They use
 `.build/fixtures` by default, allow `PEF_FIXTURES_DIR` to override the directory, and are disabled
 when `manifest.json` is absent. Download provenance and hashes remain in the local manifest.
@@ -142,13 +142,31 @@ AppleEvent handler installation, exact lookup, replacement, and removal use Grap
 separate application/system dispatch tables. Guest UPPs remain opaque addresses, and lookup
 writes procedure/refcon values through checked big-endian guest memory. Tests cover table
 isolation, signed errors, invalid outputs, wildcard lookup, and interpreted guest registration.
-Descriptor marshaling and guest callback execution remain pending; the evnt Gestalt selector
-remains undefined, and MacGzip's compatibility alert is unchanged.
+Flat AECreateDesc/AEDuplicateDesc/AEDisposeDesc/AEGetDescData/AEGetDescDataSize use checked
+big-endian AEDesc records and guest heap handles. Handle generations reject stale descriptors
+after disposal/reallocation. AECreateAppleEvent and AEGetAttributeDesc/Ptr/AEGetParamDesc/Ptr
+retain structured Graphite values, converting generated scalar attributes to guest byte order.
+Lookup currently supports exact types and typeWildCard, without coercion.
+GetNextEvent, EventAvail, and zero-sleep/null-region WaitNextEvent expose a single host launch
+event. AEProcessAppleEvent accepts the retrieved record, resolves its handler through Graphite,
+and schedules a guest TVector call with borrowed event/reply descriptors and the refcon.
+Completion reclaims those descriptors and propagates the signed OSErr. Nested event delivery
+is rejected explicitly; Toolbox imports inside a handler are supported.
 The interpreter can invoke a checked guest TVector with its TOC, up to eight integer
 arguments, a dedicated 64-byte linkage/argument area, and an instruction budget. Vector
 reads and stack writes require mapped regions; instruction fetch retains executable checks.
 Tests exercise TOC access, argument passing, return values, limits, and rejected ranges.
-This primitive is not yet wired to AppleEvent delivery or Mixed Mode UPP decoding.
+AppleEvent callbacks share the outer invocation's remaining budget, including synthetic import
+steps, and preserve the caller's registers. Tests cover interpreted oapp delivery, a Toolbox
+call from the handler, negative OSErr, looping/faulting callbacks, descriptor ownership, endian
+conversion, rollback, missing attributes, and invalid guest reads. Validation used Graphite
+master at 7ab800a. MacGzip still reaches its compatibility alert at 1,513 instructions/19 imports;
+MacZip stops at InitMenus (90 instructions), and BBEdit Lite stops at AECreateList (125).
+Lists, descriptor mutation/coercion, AESend, general high-level events, sleeping waits, host
+input, and Mixed Mode UPP decoding remain pending. The evnt Gestalt selector stays undefined.
+The record layout and event interfaces follow Apple's
+[Introduction to Apple Events](https://developer.apple.com/library/archive/documentation/mac/pdf/Interapplication_Communication/Intro_to_Apple_Events.pdf)
+and [Responding to Apple Events](https://dev.os9.ca/techpubs/mac/pdf/Interapplication_Communication/Responding_to_AEs.pdf).
 Unknown libraries, symbols, and other data imports remain explicit failures. Further Toolbox
 dispatch, complete application startup, Linux/ppc32 cross-platform tests, and Embedded
 Swift validation remain outstanding.

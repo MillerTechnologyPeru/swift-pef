@@ -38,6 +38,9 @@ public struct PEFSectionHeader: Sendable {
         container: borrowing ParserSpan,
         index: Int
     ) throws(PEFError) -> PEFSectionHeader {
+        guard index >= 0, index <= (Int.max - PEFContainerHeader.byteSize) / byteSize else {
+            throw .truncatedSection(index: index)
+        }
         var table: ParserSpan
         do throws(ParsingError) {
             let offset = PEFContainerHeader.byteSize + index * byteSize

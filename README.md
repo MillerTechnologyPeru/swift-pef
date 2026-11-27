@@ -81,7 +81,11 @@ and the installed refcon, sharing the caller's execution budget. A synthetic PEF
 path and a Toolbox call from inside the handler. Unfactored lists support creation, insertion,
 replacement, counting, copied item lookup, and deletion through Graphite. Empty record creation
 is also supported. Factored arrays, keyed record/parameter mutation, sending, sleeping
-event waits, host input, and Mixed Mode UPP decoding remain pending; `evnt` stays unadvertised.
+event waits, and host input remain pending; `evnt` stays unadvertised.
+`NewRoutineDescriptor`, `DisposeRoutineDescriptor`, and `GetCurrentISA` support prepared
+PowerPC callbacks. Callback invocation decodes version-seven, single-record descriptors as
+well as raw TVectors. Other architectures, relative/unprepared records, selector dispatch,
+and `CallUniversalProc` remain pending. BBEdit Lite now reaches `FSpOpenDF` after 887 instructions.
 Further Toolbox dispatch and full application startup remain pending, as do Linux/ppc32
 and Embedded Swift validation.
 

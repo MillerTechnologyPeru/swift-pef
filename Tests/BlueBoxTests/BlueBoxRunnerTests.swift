@@ -1,5 +1,8 @@
+#if !arch(powerpc)
 import Foundation
 import Testing
+import Graphite
+import PEFKit
 @testable import BlueBox
 
 @Suite struct BlueBoxRunnerTests {
@@ -13,29 +16,48 @@ import Testing
     }
 
     /// Code + data/TOC/TVector + loader, with real section and import relocation records.
-    private func executable(_ instructions: [UInt32], imported: Bool = false, entryOffset: UInt32 = 0) -> [UInt8] {
+    private func executable(_ instructions: [UInt32], imported: Bool = false,
+                            importedSymbol: String = "UnknownToolboxCall", importedClass: UInt32 = 2,
+                            secondaryImport: String? = nil, additionalImports: [String] = [],
+                            callbackOffset: UInt32? = nil,
+                            fileSpec: FileSpec? = nil, initializerOffset: UInt32? = nil,
+                            exported: (name: String, section: Int16, offset: UInt32)? = nil,
+                            entryOffset: UInt32 = 0) -> [UInt8] {
         let code = instructions.flatMap(be32)
         let dataOffset = (128 + code.count + 15) / 16 * 16
-        let loaderOffset = dataOffset + 16
-        let relocations: [UInt16] = imported ? [0x4600, 0x8003, 0x6000] : [0x4600]
-        let strings = imported ? Array("InterfaceLib\0TickCount\0".utf8) : []
-        let relocationOffset = imported ? 96 : 68
+        let loaderOffset = dataOffset + 256
+        let names = imported ? [importedSymbol] + (secondaryImport.map { [$0] } ?? []) + additionalImports : []
+        let relocations: [UInt16] = imported
+            ? [0x4600, 0x8003, 0x6000] + (secondaryImport == nil ? [] : [0x6001])
+                + (names.count > 2 ? (2..<names.count).map { UInt16(0x6000 + $0) } : []) : [0x4600]
+        var strings = imported ? Array(("InterfaceLib\0" + names.map { $0 + "\0" }.joined()).utf8) : []
+        let exportNameOffset = UInt32(strings.count)
+        if let exported { strings += Array(exported.name.utf8) }
+        let relocationOffset = imported ? 92 + names.count * 4 : 68
         let stringsOffset = relocationOffset + relocations.count * 2
         let hashOffset = (stringsOffset + strings.count + 3) / 4 * 4
         var loader: [UInt8] = []
-        for word: UInt32 in [1, 0, 0xFFFFFFFF, 0, 0xFFFFFFFF, 0,
-                              imported ? 1 : 0, imported ? 1 : 0, 1,
-                              UInt32(relocationOffset), UInt32(stringsOffset), UInt32(hashOffset), 0, 0] {
+        for word: UInt32 in [1, 0, initializerOffset == nil ? 0xFFFFFFFF : 1, initializerOffset == nil ? 0 : 56, 0xFFFFFFFF, 0,
+                              imported ? 1 : 0, UInt32(names.count), 1,
+                              UInt32(relocationOffset), UInt32(stringsOffset), UInt32(hashOffset), 0, exported == nil ? 0 : 1] {
             loader += be32(word)
         }
         if imported {
-            loader += be32(0) + be32(0) + be32(0) + be32(1) + be32(0) + [0, 0, 0, 0]
-            loader += be32(0x0200000D)
+            loader += be32(0) + be32(0) + be32(0) + be32(UInt32(names.count)) + be32(0) + [0, 0, 0, 0]
+            var nameOffset: UInt32 = 13
+            for name in names {
+                loader += be32(importedClass << 24 | nameOffset)
+                nameOffset += UInt32(name.utf8.count + 1)
+            }
         }
         loader += be16(1) + be16(0) + be32(UInt32(relocations.count)) + be32(0)
         loader += relocations.flatMap(be16) + strings
         while loader.count < hashOffset { loader.append(0) }
-        loader += be32(0)
+        if let exported {
+            let hash = Array(exported.name.utf8).withUnsafeBufferPointer { CFMHash.computeHashWord($0) }
+            loader += be32(1 << 18) + be32(hash)
+            loader += be32(1 << 24 | exportNameOffset) + be32(exported.offset) + be16(UInt16(bitPattern: exported.section))
+        } else { loader += be32(0) }
         var bytes: [UInt8] = []
         for word: UInt32 in [0x4A6F7921, 0x70656666, 0x70777063, 1, 0, 0, 0, 0] { bytes += be32(word) }
         bytes += be16(3) + be16(2) + be32(0)
@@ -44,13 +66,215 @@ import Testing
                 + be32(UInt32(total)) + be32(UInt32(offset)) + [kind, 1, 4, 0]
         }
         bytes += section(code.count, 128, 0)
-        bytes += section(16, dataOffset, 1)
+        bytes += section(256, dataOffset, 1)
         bytes += section(loader.count, loaderOffset, 4)
         while bytes.count < 128 { bytes.append(0) }
         bytes += code
         while bytes.count < dataOffset { bytes.append(0) }
         bytes += be32(entryOffset) + be32(8) + be32(42) + be32(0)
+        while bytes.count < loaderOffset { bytes.append(0) }
+        if let callbackOffset {
+            bytes.replaceSubrange(dataOffset + 48..<dataOffset + 56,
+                                  with: be32(0x01000000 + callbackOffset) + be32(0))
+        }
+        if let initializerOffset {
+            bytes.replaceSubrange(dataOffset + 56..<dataOffset + 64,
+                                  with: be32(0x01000000 + initializerOffset) + be32(0))
+        }
+        if let fileSpec {
+            bytes.replaceSubrange(dataOffset + 64..<dataOffset + 134, with: GuestFileManager.bytes(fileSpec))
+        }
+        if let exported {
+            let name = Array(exported.name.utf8)
+            bytes.replaceSubrange(dataOffset + 64..<dataOffset + 65 + name.count, with: [UInt8(name.count)] + name)
+        }
         return bytes + loader
+    }
+
+    @Test(arguments: [Int16(1), -2, -3]) func guestFindsPreparedSectionAbsoluteAndReexportedSymbols(section: Int16) throws {
+        let offset: UInt32 = section == 1 ? 8 : (section == -2 ? 0x12345678 : 0)
+        var code: [UInt32] = [0x7FC802A6, 0x7C5F1378, 0x38600001, 0x38820038, 0x38A20048, 0x38C2004C,
+                              0x81820004, 0x800C0000, 0x804C0004, 0x7C0903A6, 0x4E800421,
+                              0x7FE2FB78, 0x80620048]
+        if section == 1 { code += [0x80630000] }
+        code += [0x7FC803A6, 0x4E800020]
+        let bytes = executable(code, imported: true, importedSymbol: "FindSymbol",
+                               exported: ("Answer", section, offset))
+        let report = try bytes.withUnsafeBytes { try BlueBoxRunner.run(bytes: $0) }
+        #expect(report.execution.stop == .returned)
+        #expect(report.execution.r3 == (section == 1 ? 42 : (section == -2 ? 0x12345678 : 0x20000000)))
+        #expect(report.handledImportCount == 1)
+    }
+
+    @Test func rejectsAnExportOutsideItsInstantiatedSection() throws {
+        let bytes = executable([0x4E800020], exported: ("Invalid", 1, 257))
+        do {
+            _ = try bytes.withUnsafeBytes { try BlueBoxRunner.run(bytes: $0) }
+            Issue.record("Expected a malformed loader error for an out-of-range export")
+        } catch PEFError.malformedLoaderSection { }
+    }
+
+    @Test(arguments: [false, true]) func initializesFragmentBeforeMainWithTheCorrectLocator(onDisk: Bool) throws {
+        let name = PascalString(bytes: Array("Application".utf8))
+        // Init copies the first word at the locator's address into shared guest memory.
+        let code: [UInt32] = [0x3C804000, 0x80640000, 0x4E800020,
+                              0x80830010, 0x80840000, 0x3CA04000, 0x90850000, 0x38600000, 0x4E800020]
+        let bytes = executable(code, initializerOffset: 12)
+        let file = GuestFile(name: name, dataFork: bytes)
+        let report = try bytes.withUnsafeBytes {
+            try BlueBoxRunner.run(bytes: $0, applicationFile: onDisk ? file : nil)
+        }
+        #expect(report.execution.stop == .returned)
+        #expect(report.executionEntry == .main)
+        #expect(report.execution.r3 == (onDisk ? 0xFF9C0000 : 0x4A6F7921))
+        #expect(report.execution.instructions == 9)
+        #expect(report.execution.toc == report.toc)
+        let limited = try bytes.withUnsafeBytes { try BlueBoxRunner.run(bytes: $0, maxInstructions: 8) }
+        #expect(limited.execution.stop == .instructionLimit)
+        #expect(limited.executionEntry == .main)
+        #expect(limited.execution.instructions == 8)
+        let explicit = try bytes.withUnsafeBytes { try BlueBoxRunner.run(bytes: $0, entry: .initialize) }
+        #expect(explicit.execution.stop == .returned)
+        #expect(explicit.executionEntry == .initialize)
+        #expect(explicit.execution.instructions == 6)
+    }
+
+    @Test func failedOrLoopingInitializerPreventsMainExecution() throws {
+        let failed = executable([0, 0x3860FFCE, 0x4E800020], initializerOffset: 4)
+        let report = try failed.withUnsafeBytes { try BlueBoxRunner.run(bytes: $0) }
+        #expect(report.execution.stop == .initializationFailed(-50))
+        #expect(report.executionEntry == .initialize)
+        #expect(report.execution.instructions == 2)
+        #expect(report.diagnostic.contains("initialization failed with OSErr -50"))
+        let looping = executable([0, 0x48000000], initializerOffset: 4)
+        let limited = try looping.withUnsafeBytes { try BlueBoxRunner.run(bytes: $0, maxInstructions: 5) }
+        #expect(limited.execution.stop == .instructionLimit)
+        #expect(limited.executionEntry == .initialize)
+        #expect(limited.execution.instructions == 5)
+    }
+
+    @Test func initializerAndMainShareToolboxHeapState() throws {
+        // Direct code imports need no TOC; init allocates 32 bytes, main reports the remaining heap.
+        let main: [UInt32] = [0x7FC802A6, 0x3D80F000, 0x618C0004, 0x7D8903A6, 0x4E800421, 0x7FC803A6, 0x4E800020]
+        let initialize: [UInt32] = [0x7FC802A6, 0x38600020, 0x3D80F000, 0x7D8903A6,
+                                    0x4E800421, 0x38600000, 0x7FC803A6, 0x4E800020]
+        let bytes = executable(main + initialize, imported: true, importedSymbol: "NewPtr", importedClass: 0,
+                               secondaryImport: "FreeMem", initializerOffset: UInt32(main.count * 4))
+        let report = try bytes.withUnsafeBytes { try BlueBoxRunner.run(bytes: $0) }
+        #expect(report.execution.stop == .returned)
+        #expect(report.execution.r3 == GuestHeap.byteCount - 32)
+        #expect(report.handledImportCount == 2)
+    }
+
+    @Test(arguments: [false, true]) func guestOpensReadsAndClosesAMountedFile(parameterBlock: Bool) throws {
+        func invoke(_ offset: UInt32) -> [UInt32] {
+            [0x81820000 | offset, 0x800C0000, 0x804C0004, 0x7C0903A6, 0x4E800421]
+        }
+        let name = PascalString(bytes: Array("Fixture".utf8))
+        let spec = FileSpec(volume: -100, parent: .root, name: name)
+        var code: [UInt32] = [0x7FC802A6, 0x7C5F1378, 0x38620038, 0x38800001, 0x38A20088]
+        code += invoke(4) // FSpOpenDF(&spec, fsRdPerm, &refNum)
+        if parameterBlock {
+            // IOParam at data+160: reference at +24, buffer +32, request +36, mode +44, offset +46.
+            code += [0x7FE2FB78, 0xA0020088, 0xB00200B0, 0x38020090, 0x900200B8,
+                     0x38000006, 0x900200BC, 0x38000001, 0xB00200C4,
+                     0x38000000, 0xB00200C6, 0xB00200C8, 0x38620098]
+        } else {
+            code += [0x7FE2FB78, 0xA0620088, 0x38000006, 0x9002008C, 0x3882008C, 0x38A20090]
+        }
+        code += invoke(8) // Request six bytes from a four-byte fork.
+        code += [0x7FE2FB78, 0xA0620088]
+        code += invoke(12) // FSClose(refNum)
+        code += [0x7FE2FB78, 0x80620090, 0x7FC803A6, 0x4E800020]
+        let bytes = executable(code, imported: true, importedSymbol: "FSpOpenDF",
+                               secondaryImport: parameterBlock ? "PBReadSync" : "FSRead", additionalImports: ["FSClose"], fileSpec: spec)
+        let report = try bytes.withUnsafeBytes {
+            try BlueBoxRunner.run(bytes: $0, files: [GuestFile(name: name, dataFork: [1, 2, 3, 4])])
+        }
+        #expect(report.execution.stop == .returned)
+        #expect(report.execution.r3 == 0x01020304)
+        #expect(report.handledImportCount == 3)
+    }
+
+    @Test func guestCreatesPopulatesAndCountsAnAppleEventList() throws {
+        func invoke(_ offset: UInt32) -> [UInt32] {
+            [0x81820000 | offset, 0x800C0000, 0x804C0004, 0x7C0903A6, 0x4E800421]
+        }
+        var code: [UInt32] = [0x7FC802A6, 0x7C5F1378,
+                             0x38600000, 0x38800000, 0x38A00000, 0x38C20028]
+        code += invoke(4) // AECreateList(NULL, 0, false, &list)
+        code += [0x7FE2FB78, 0x38620028, 0x38800000, 0x3CA05445, 0x60A55854,
+                 0x7C461378, 0x38E00004]
+        code += invoke(8) // AEPutPtr(&list, 0, 'TEXT', toc, 4)
+        code += [0x7FE2FB78, 0x38620028, 0x38820030]
+        code += invoke(12) // AECountItems(&list, &count)
+        code += [0x7FE2FB78, 0x80620030, 0x7FC803A6, 0x4E800020]
+        let bytes = executable(code, imported: true, importedSymbol: "AECreateList",
+                               secondaryImport: "AEPutPtr", additionalImports: ["AECountItems"])
+        let report = try bytes.withUnsafeBytes { try BlueBoxRunner.run(bytes: $0) }
+        #expect(report.execution.stop == .returned)
+        #expect(report.execution.r3 == 1)
+        #expect(report.handledImportCount == 3)
+    }
+
+    @Test(arguments: [false, true]) func guestReceivesLaunchEventAndCallsToolboxFromItsHandler(wrapped: Bool) throws {
+        func invoke(_ offset: UInt32) -> [UInt32] {
+            [0x81820000 | offset, 0x800C0000, 0x804C0004, 0x7C0903A6, 0x4E800421]
+        }
+        var code: [UInt32] = [0x7FC802A6, 0x7C5F1378, // preserve main LR/TOC
+            0x9042002C] // callback TVector TOC = this fragment's TOC
+        if wrapped {
+            code += [0x38620028, 0x38800FE0, 0x38A00001]
+            code += invoke(16) // NewRoutineDescriptor
+            code += [0x7C7C1B78, 0x7FE2FB78] // preserve UPP and restore TOC
+        }
+        code += [0x3C606165, 0x60637674, 0x3C806F61, 0x60847070,
+            wrapped ? 0x7F85E378 : 0x38A20028, 0x38C0FFCE, 0x38E00000]
+        code += invoke(4) // AEInstallEventHandler
+        code += [0x7FE2FB78, 0x38600400, 0x38820040]
+        code += invoke(8) // GetNextEvent
+        code += [0x7FE2FB78, 0x38620040]
+        code += invoke(12) // AEProcessAppleEvent
+        code += [0x7FE2FB78, 0x7FC803A6, 0x4E800020]
+        let callbackOffset = UInt32(code.count * 4)
+        code += [0x7FA802A6, 0x7CBB2B78, // save handler LR and refcon
+                 0x38600400, 0x38820050]
+        code += invoke(8) // nested Toolbox call; the launch event has already been consumed
+        code += [0x7F63DB78, 0x7FA803A6, 0x4E800020] // return the negative refcon as OSErr
+        let bytes = executable(code, imported: true, importedSymbol: "AEInstallEventHandler",
+                               secondaryImport: "GetNextEvent", additionalImports: ["AEProcessAppleEvent"] + (wrapped ? ["NewRoutineDescriptor"] : []),
+                               callbackOffset: callbackOffset)
+        let report = try bytes.withUnsafeBytes { try BlueBoxRunner.run(bytes: $0) }
+        #expect(report.execution.stop == .returned)
+        #expect(Int32(bitPattern: report.execution.r3) == -50)
+        #expect(report.handledImportCount == (wrapped ? 5 : 4))
+        #expect(report.execution.toc == report.toc)
+        #expect(report.execution.stackPointer == report.initialStackPointer)
+        let limited = try bytes.withUnsafeBytes { try BlueBoxRunner.run(bytes: $0, maxInstructions: wrapped ? 50 : 35) }
+        #expect(limited.execution.stop == .instructionLimit)
+        #expect(limited.execution.instructions <= (wrapped ? 50 : 35))
+        var looping = bytes
+        let handlerStart = 128 + Int(callbackOffset)
+        looping.replaceSubrange(handlerStart..<handlerStart + 4, with: be32(0x48000000))
+        let loopReport = try looping.withUnsafeBytes { try BlueBoxRunner.run(bytes: $0, maxInstructions: 100) }
+        #expect(loopReport.execution.stop == .instructionLimit)
+        #expect(loopReport.execution.pc == 0x01000000 + callbackOffset)
+        #expect(loopReport.execution.instructions <= 100)
+        var faulting = bytes
+        faulting.replaceSubrange(handlerStart..<handlerStart + 4, with: be32(0))
+        let faultReport = try faulting.withUnsafeBytes { try BlueBoxRunner.run(bytes: $0) }
+        #expect(faultReport.execution.stop == .illegalInstruction(0))
+        #expect(faultReport.execution.pc == 0x01000000 + callbackOffset)
+        if wrapped {
+            var mismatched = bytes
+            mismatched.replaceSubrange(128 + 4 * 4..<128 + 5 * 4, with: be32(0x38800000))
+            let unsupported = try mismatched.withUnsafeBytes { try BlueBoxRunner.run(bytes: $0) }
+            guard case .unsupportedRoutineDescriptor = unsupported.execution.stop else {
+                Issue.record("Expected unsupported routine descriptor: \(unsupported.diagnostic)")
+                return
+            }
+            #expect(unsupported.diagnostic.contains("unsupported Mixed Mode routine descriptor"))
+        }
     }
 
     @Test func loadsTVectorTOCAndStackAndReturns() throws {
@@ -87,8 +311,21 @@ import Testing
         let bytes = executable([0x81820004, 0x800C0000, 0x804C0004, 0x7C0903A6, 0x4E800421], imported: true)
         let report = try bytes.withUnsafeBytes { try BlueBoxRunner.run(bytes: $0) }
         #expect(report.execution.stop == .unsupportedImport(0))
-        #expect(report.diagnostic.contains("InterfaceLib:TickCount"))
+        #expect(report.diagnostic.contains("InterfaceLib:UnknownToolboxCall"))
         #expect(report.execution.instructions == 5)
+        #expect(report.handledImportCount == 0)
+    }
+
+    @Test func callsToolboxThroughTVectorAndReturnsToGuest() throws {
+        // Preserve the host-return LR across bctrl, load the import TVector, call, restore LR and return.
+        let code: [UInt32] = [0x7FC802A6, 0x81820004, 0x800C0000, 0x804C0004,
+                              0x7C0903A6, 0x4E800421, 0x7FC803A6, 0x4E800020]
+        let bytes = executable(code, imported: true, importedSymbol: "GetDblTime")
+        let report = try bytes.withUnsafeBytes { try BlueBoxRunner.run(bytes: $0) }
+        #expect(report.execution.stop == .returned)
+        #expect(report.execution.r3 == 30)
+        #expect(report.execution.instructions == 8)
+        #expect(report.handledImportCount == 1)
     }
 
     @Test func diagnosesUnmappedReadAndProtectedWrite() throws {
@@ -97,6 +334,237 @@ import Testing
         let write = try executable([0x3C800100, 0x90640000]).withUnsafeBytes { try BlueBoxRunner.run(bytes: $0) }
         #expect(write.execution.stop == .memoryFault(address: 0x01000000, write: true))
         #expect(write.execution.pc == write.codeAddress + 4)
+    }
+
+    @Test func initializesApplicationOwnedQuickDrawGlobals() throws {
+        // r3=&thePort within this PEF's data, r31=&randSeed, then call InitGraf and read randSeed.
+        let code: [UInt32] = [0x7FC802A6, 0x386200CA, 0x3BE3FF82,
+                              0x81820004, 0x800C0000, 0x804C0004, 0x7C0903A6, 0x4E800421,
+                              0x807F0000, 0x7FC803A6, 0x4E800020]
+        let report = try executable(code, imported: true, importedSymbol: "InitGraf").withUnsafeBytes {
+            try BlueBoxRunner.run(bytes: $0)
+        }
+        #expect(report.execution.stop == .returned)
+        #expect(report.execution.r3 == 1)
+        #expect(report.handledImportCount == 1)
+    }
+
+    @Test func resolvesImportedQuickDrawData() throws {
+        let report = try executable([0x80620004, 0x4E800020], imported: true,
+                                    importedSymbol: "qd", importedClass: 1).withUnsafeBytes {
+            try BlueBoxRunner.run(bytes: $0)
+        }
+        #expect(report.execution.stop == .returned)
+        #expect(report.execution.r3 == GuestQuickDrawGlobals.address)
+    }
+
+    @Test func guestReadsPascalFontNameWrittenByGraphiteBridge() throws {
+        // Save LR, put a guest data buffer in r4, request system family 0, then read its Pascal length.
+        let code: [UInt32] = [0x7FC802A6, 0x3BE20028, 0x389F0000, 0x38600000,
+                              0x81820004, 0x800C0000, 0x804C0004, 0x7C0903A6, 0x4E800421,
+                              0x887F0000, 0x7FC803A6, 0x4E800020]
+        let report = try executable(code, imported: true, importedSymbol: "GetFontName").withUnsafeBytes {
+            try BlueBoxRunner.run(bytes: $0)
+        }
+        #expect(report.execution.stop == .returned)
+        #expect(report.execution.r3 == 7)
+        #expect(report.handledImportCount == 1)
+    }
+
+    @Test func guestDereferencesWindowManagerRegionHandle() throws {
+        // Call InitWindows, follow WMgrPort.visRgn's master pointer, read the rectangular region size.
+        let code: [UInt32] = [0x7FC802A6, 0x81820004, 0x800C0000, 0x804C0004,
+                              0x7C0903A6, 0x4E800421, 0x3C802200, 0x80840018,
+                              0x80840000, 0xA0640000, 0x7FC803A6, 0x4E800020]
+        let report = try executable(code, imported: true, importedSymbol: "InitWindows").withUnsafeBytes {
+            try BlueBoxRunner.run(bytes: $0)
+        }
+        #expect(report.execution.stop == .returned)
+        #expect(report.execution.r3 == 10)
+        #expect(report.handledImportCount == 1)
+    }
+
+    @Test func returnsMenuBarHeightThroughImportTVector() throws {
+        let code: [UInt32] = [0x7FC802A6, 0x81820004, 0x800C0000, 0x804C0004,
+                              0x7C0903A6, 0x4E800421, 0x7FC803A6, 0x4E800020]
+        let report = try executable(code, imported: true, importedSymbol: "GetMBarHeight").withUnsafeBytes {
+            try BlueBoxRunner.run(bytes: $0)
+        }
+        #expect(report.execution.stop == .returned)
+        #expect(report.execution.r3 == 20)
+        #expect(report.handledImportCount == 1)
+    }
+
+    @Test func guestDereferencesEmptyTextEditScrapHandle() throws {
+        let code: [UInt32] = [0x7FC802A6, 0x81820004, 0x800C0000, 0x804C0004,
+                              0x7C0903A6, 0x4E800421, 0x3C802300, 0x80640000,
+                              0x7FC803A6, 0x4E800020]
+        let report = try executable(code, imported: true, importedSymbol: "TEInit").withUnsafeBytes {
+            try BlueBoxRunner.run(bytes: $0)
+        }
+        #expect(report.execution.stop == .returned)
+        #expect(report.execution.r3 == 0) // Empty handle's data pointer is nil.
+        #expect(report.handledImportCount == 1)
+    }
+
+    @Test func checksGuestParamTextReadsAfterDialogInitialization() throws {
+        for valid in [false, true] {
+            var code: [UInt32] = [0x7FC802A6, 0x3BE20000, 0x38600000,
+                                  0x81820004, 0x800C0000, 0x804C0004, 0x7C0903A6, 0x4E800421,
+                                  0x385F0000]
+            // All four strings point to an empty Pascal string in guest data, or to unmapped null.
+            code += valid ? [0x38620028, 0x38820028, 0x38A20028, 0x38C20028]
+                          : [0x38600000, 0x38800000, 0x38A00000, 0x38C00000]
+            code += [0x81820008, 0x800C0000, 0x804C0004, 0x7C0903A6, 0x4E800421,
+                     0x7FC803A6, 0x4E800020]
+            let report = try executable(code, imported: true, importedSymbol: "InitDialogs",
+                                        secondaryImport: "ParamText").withUnsafeBytes {
+                try BlueBoxRunner.run(bytes: $0)
+            }
+            #expect(report.execution.stop == (valid ? .returned : .memoryFault(address: 0, write: false)))
+            #expect(report.handledImportCount == (valid ? 2 : 1))
+        }
+    }
+
+    @Test func guestWritesAllocatedPointerAndDereferencesAllocatedHandle() throws {
+        for handle in [false, true] {
+            var code: [UInt32] = [0x7FC802A6, 0x38600010, 0x81820004, 0x800C0000,
+                                  0x804C0004, 0x7C0903A6, 0x4E800421]
+            if handle { code += [0x80630000] } // Master pointer -> data pointer.
+            code += [0x3880002A, 0x90830000, 0x80630000, 0x7FC803A6, 0x4E800020]
+            let report = try executable(code, imported: true,
+                                        importedSymbol: handle ? "NewHandleClear" : "NewPtrClear").withUnsafeBytes {
+                try BlueBoxRunner.run(bytes: $0)
+            }
+            #expect(report.execution.stop == .returned)
+            #expect(report.execution.r3 == 42)
+            #expect(report.handledImportCount == 1)
+        }
+    }
+
+    @Test func guestReadsMemErrorAfterAllocationFailure() throws {
+        let code: [UInt32] = [0x7FC802A6, 0x3BE20000, 0x3860FFFF,
+                              0x81820004, 0x800C0000, 0x804C0004, 0x7C0903A6, 0x4E800421,
+                              0x385F0000, 0x81820008, 0x800C0000, 0x804C0004, 0x7C0903A6,
+                              0x4E800421, 0x7FC803A6, 0x4E800020]
+        let report = try executable(code, imported: true, importedSymbol: "NewPtr",
+                                    secondaryImport: "MemError").withUnsafeBytes {
+            try BlueBoxRunner.run(bytes: $0)
+        }
+        #expect(report.execution.stop == .returned)
+        #expect(Int32(bitPattern: report.execution.r3) == -108)
+        #expect(report.handledImportCount == 2)
+    }
+
+    @Test func guestGestaltCallWritesResponseAndReportsErrors() throws {
+        for scenario in 0..<3 {
+            let selector: UInt32 = scenario == 1 ? 0x7174696D : 0x73797361 // qtim or sysa
+            var code: [UInt32] = [0x7FC802A6, 0x3BE20028,
+                                  0x3C600000 | (selector >> 16), 0x60630000 | (selector & 0xFFFF)]
+            code += [scenario == 2 ? 0x38800000 : 0x389F0000,
+                     0x81820004, 0x800C0000, 0x804C0004, 0x7C0903A6, 0x4E800421]
+            if scenario == 0 { code += [0x807F0000] }
+            code += [0x7FC803A6, 0x4E800020]
+            let report = try executable(code, imported: true, importedSymbol: "Gestalt").withUnsafeBytes {
+                try BlueBoxRunner.run(bytes: $0)
+            }
+            if scenario == 2 {
+                #expect(report.execution.stop == .memoryFault(address: 0, write: true))
+                #expect(report.handledImportCount == 0)
+            } else {
+                #expect(report.execution.stop == .returned)
+                #expect(Int32(bitPattern: report.execution.r3) == (scenario == 0 ? 2 : -5551))
+                #expect(report.handledImportCount == 1)
+            }
+        }
+    }
+
+    @Test func guestReadsStringBytesFromApplicationResourceFork() throws {
+        let resources = try ResourceMap.write([(resource: Resource(type: "STR#", id: -7),
+                                                bytes: [0, 1, 1, 0x8E])])
+        let code: [UInt32] = [0x7FC802A6, 0x3BE20028, 0x387F0000, 0x3880FFF9, 0x38A00001,
+                              0x81820004, 0x800C0000, 0x804C0004, 0x7C0903A6, 0x4E800421,
+                              0x887F0001, 0x7FC803A6, 0x4E800020]
+        let report = try executable(code, imported: true, importedSymbol: "GetIndString").withUnsafeBytes {
+            try BlueBoxRunner.run(bytes: $0, resourceFork: resources)
+        }
+        #expect(report.execution.stop == .returned)
+        #expect(report.execution.r3 == 0x8E)
+        #expect(report.handledImportCount == 1)
+    }
+
+    @Test func guestConvertsPascalStringInPlaceAndUsesReturnedPointer() throws {
+        let code: [UInt32] = [0x7FC802A6, 0x3BE20028, 0x3C80028E, 0x60844100, 0x909F0000,
+                              0x387F0000, 0x81820004, 0x800C0000, 0x804C0004, 0x7C0903A6,
+                              0x4E800421, 0x88630000, 0x7FC803A6, 0x4E800020]
+        let report = try executable(code, imported: true, importedSymbol: "p2cstr").withUnsafeBytes {
+            try BlueBoxRunner.run(bytes: $0)
+        }
+        #expect(report.execution.stop == .returned)
+        #expect(report.execution.r3 == 0x8E)
+        #expect(report.handledImportCount == 1)
+    }
+
+    @Test func guestBlockMoveHandlesOverlapAndProtectedDestination() throws {
+        for protected in [false, true] {
+            let code: [UInt32] = [0x7FC802A6, 0x38620028, 0x3CC01234, 0x60C65678, 0x90C30000,
+                                  0x3BE30001, protected ? 0x3C800100 : 0x389F0000, 0x38A00004,
+                                  0x81820004, 0x800C0000, 0x804C0004, 0x7C0903A6, 0x4E800421,
+                                  0x807F0000, 0x7FC803A6, 0x4E800020]
+            let report = try executable(code, imported: true, importedSymbol: "BlockMoveData").withUnsafeBytes {
+                try BlueBoxRunner.run(bytes: $0)
+            }
+            if protected {
+                #expect(report.execution.stop == .memoryFault(address: 0x01000000, write: true))
+                #expect(report.handledImportCount == 0)
+            } else {
+                #expect(report.execution.stop == .returned)
+                #expect(report.execution.r3 == 0x12345678)
+                #expect(report.handledImportCount == 1)
+            }
+        }
+    }
+
+    @Test func guestDereferencesLoadedResourceHandle() throws {
+        let resources = try ResourceMap.write([(resource: Resource(type: "TEST", id: -7), bytes: [1, 2, 3, 4])])
+        let code: [UInt32] = [0x7FC802A6, 0x3C605445, 0x60635354, 0x3880FFF9,
+                              0x81820004, 0x800C0000, 0x804C0004, 0x7C0903A6, 0x4E800421,
+                              0x80630000, 0x80630000, 0x7FC803A6, 0x4E800020]
+        let report = try executable(code, imported: true, importedSymbol: "GetResource").withUnsafeBytes {
+            try BlueBoxRunner.run(bytes: $0, resourceFork: resources)
+        }
+        #expect(report.execution.stop == .returned)
+        #expect(report.execution.r3 == 0x01020304)
+        #expect(report.handledImportCount == 1)
+    }
+
+    @Test func guestInstallsAndRetrievesAppleEventHandler() throws {
+        // Save LR/TOC, register an opaque guest UPP and refcon, then retrieve both into guest data.
+        let code: [UInt32] = [0x7FC802A6, 0x3BE20000, 0x3C606165, 0x60637674,
+                              0x3C806F61, 0x60847070, 0x3CA00100, 0x60A50200, 0x38C0FFFF, 0x38E00000,
+                              0x81820004, 0x800C0000, 0x804C0004, 0x7C0903A6, 0x4E800421,
+                              0x385F0000, 0x3BA20028, 0x3C606165, 0x60637674, 0x3C806F61, 0x60847070,
+                              0x38BD0000, 0x38DD0004, 0x38E00000,
+                              0x81820008, 0x800C0000, 0x804C0004, 0x7C0903A6, 0x4E800421,
+                              0x807D0000, 0x7FC803A6, 0x4E800020]
+        let report = try executable(code, imported: true, importedSymbol: "AEInstallEventHandler",
+                                    secondaryImport: "AEGetEventHandler").withUnsafeBytes {
+            try BlueBoxRunner.run(bytes: $0)
+        }
+        #expect(report.execution.stop == .returned)
+        #expect(report.execution.r3 == 0x01000200)
+        #expect(report.handledImportCount == 2)
+    }
+
+    @Test func initGrafRejectsReadOnlyGuestDestination() throws {
+        // Pass thePort=code+126, making InitGraf's first write target the code section.
+        let code: [UInt32] = [0x3C600100, 0x3863007E,
+                              0x81820004, 0x800C0000, 0x804C0004, 0x7C0903A6, 0x4E800421]
+        let report = try executable(code, imported: true, importedSymbol: "InitGraf").withUnsafeBytes {
+            try BlueBoxRunner.run(bytes: $0)
+        }
+        #expect(report.execution.stop == .memoryFault(address: 0x01000000, write: true))
+        #expect(report.handledImportCount == 0)
     }
 
     @Test func rejectsUnalignedEntryAndMissingInit() throws {
@@ -119,4 +587,28 @@ import Testing
         #expect(report.execution.instructions <= 1000)
         print("Real execution: Educate Quotes: \(report.diagnostic)")
     }
+
+    @Test func macGzipAdvancesPastQuickDrawInitialization() throws {
+        let root = ProcessInfo.processInfo.environment["PEF_FIXTURES_DIR"].map {
+            URL(fileURLWithPath: $0, isDirectory: true)
+        } ?? URL(fileURLWithPath: #filePath).deletingLastPathComponent()
+            .deletingLastPathComponent().deletingLastPathComponent().appendingPathComponent(".build/fixtures")
+        let path = root.appendingPathComponent("extracted/macgzip/MacGzip/MacGzip")
+        guard FileManager.default.fileExists(atPath: path.path) else { return }
+        let app = try BlueBoxApplication.load(path: path.path)
+        #expect(app.resourceFork != nil)
+        let report = try app.dataFork.withUnsafeBytes {
+            try BlueBoxRunner.run(bytes: $0, resourceFork: app.resourceFork,
+                                  captureFramebuffer: true, maxInstructions: 10000)
+        }
+        #expect(report.execution.stop == .alertPending)
+        #expect(report.pendingAlert?.id == 151)
+        #expect(report.diagnostic.contains("Sorry, System 7 required"))
+        #expect(report.diagnostic.contains("gestaltUndefSelectorErr"))
+        #expect(report.framebufferPPM?.count == 921615)
+        #expect(report.handledImportCount == 19)
+        #expect(report.execution.instructions == 1513)
+    }
 }
+
+#endif

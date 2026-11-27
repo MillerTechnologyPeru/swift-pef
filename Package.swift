@@ -3,6 +3,26 @@ import PackageDescription
 
 // PEFKit includes fragment preparation, format parsers, relocation, and resource-fork readers.
 // BlueBox maps prepared sections into its emulated guest address space and runs bounded calls.
+// Its tested Toolbox dispatcher bridges supported InterfaceLib imports to per-run Graphite state.
+// QuickDraw globals and the monochrome screen use guest-owned backing memory.
+// The initial Window Manager port also exposes packed guest records and region handles.
+// The headless Menu Manager draws its initial empty bar into the shared screen.
+// TextEdit initialization owns a guest master pointer for its empty private scrap.
+// Dialog defaults and substitution strings stay per-run, with checked guest reads.
+// The bounded application heap backs tested guest pointer and handle allocations.
+// Gestalt reports an explicit guest profile instead of the host environment.
+// Application resource forks feed tested Graphite resource and string-list bridges.
+// Tested Pascal/C conversion bridges operate on checked guest bytes, including overlapping buffers.
+// Tested BlockMove bridges preserve overlapping data and validate complete guest ranges.
+// Tested resource handles load application payloads into the guest heap and retain stable identity.
+// Tested standard StopAlert resources can render into a captured headless framebuffer.
+// Tested AppleEvent descriptors and bounded guest callbacks bridge the initial headless launch event.
+// Mixed Mode routine descriptors wrap prepared guest PowerPC transition vectors.
+// Tested File Manager calls expose explicitly mounted read-only fork snapshots.
+// CFM initialization blocks precede main entry execution in the shared guest context.
+// Tested synchronous parameter-block reads preserve packed IOParam fields and checked guest output.
+// Tested CFM symbol lookup exposes the prepared application's relocated export metadata.
+// The interpreted execution backend is excluded when targeting 32-bit PowerPC.
 // PEFKit is Foundation-free. CResourceIO isolates platform xattr calls from the format parsers.
 // Embedded Swift is not enabled or validated yet; it also needs BinaryParsingEmbedded.
 

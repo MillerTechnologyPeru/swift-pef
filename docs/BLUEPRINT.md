@@ -52,7 +52,7 @@ Reference specifications:
 Validation includes synthetic format fixtures, native macOS xattr tests, and 30 local real-file
 cases: preparation/export lookup/entry-vector relocation for 15 PowerPC PEF payloads and resource
 parsing for their 15 AppleDouble sidecars. Payloads include MacGzip 1.1.3, MacZip 1.06, BBEdit Lite's
-Classic and Carbon variants, and eleven BBEdit plug-ins. The full suite passes 103 cases.
+Classic and Carbon variants, and eleven BBEdit plug-ins. The full suite passes 236 cases.
 Real-file tests use placeholder import addresses and never execute guest code. They use
 `.build/fixtures` by default, allow `PEF_FIXTURES_DIR` to override the directory, and are disabled
 when `manifest.json` is absent. Download provenance and hashes remain in the local manifest.
@@ -60,8 +60,174 @@ BlueBox now maps prepared sections into guest memory, initializes r1/r2 from a s
 entry TVector, and runs PPC32Core with a bounded instruction count and memory permissions.
 Execution tests cover returns, loops, unsupported opcodes/imports, invalid entry addresses,
 and memory faults. The Educate Quotes plug-in executes 15 instructions before an unmapped read;
-the CLI runs MacGzip for 72 instructions before stopping at `InterfaceLib:FlushEvents`.
-Toolbox dispatch, complete application startup, Linux/ppc32 cross-platform tests, and Embedded
+the CLI runs MacGzip for 1,513 instructions, servicing nineteen Toolbox calls before presenting
+StopAlert #151 and stopping awaiting input. The rendered error says “Sorry, System 7 required”
+and “gestaltUndefSelectorErr (Undefined selector)”. The application's `evnt` Gestalt probe
+remains unsupported; this is an error-reporting path rather than a successful launch.
+The initial per-run dispatcher bridges Graphite clocks and cursor state and implements
+FlushEvents mask/stop-mask queue filtering. Host input delivery, cursor presentation, and
+further QuickDraw operations still need integration. `InitGraf` writes the public globals
+relative to the caller's `thePort` pointer, supports the InterfaceLib `qd` data import, and
+uses a shared guest/Graphite 640×480 monochrome framebuffer. Tests cover packed field offsets,
+big-endian encoding, application-owned globals, read-only destinations, and shared pixels.
+Font initialization keeps a per-run Graphite registry and loads its built-in fallback once.
+Font ID/default-size queries and checked Pascal font-name writes are bridged; tests cover
+registry isolation, repeat initialization, unknown names, rejected destinations, and guest
+readback. Host font discovery, resource-font loading, and text rendering shims remain pending.
+Window Manager initialization creates a headless Graphite screen port and a guest-packed
+108-byte GrafPort with valid visible/clip-region master pointers and rectangular region records.
+GetWMgrPort returns its guest address; FrontWindow handles the initial empty window list.
+Tests verify field offsets, guest region-handle dereferencing, repeat initialization, and
+rejected output pointers. Window creation, desktop painting, and native presentation remain pending.
+Menu initialization owns an empty list and draws a 20-pixel monochrome bar through Graphite
+into the shared screen. DrawMenuBar, ClearMenuBar, and GetMBarHeight cover that initial state.
+Tests check bar pixels and separator, desktop/current-port preservation, repeat initialization,
+per-run isolation, redraw behavior, and the guest height-query call. Resource menus, menu
+tracking, and menu color resources remain pending.
+TextEdit initialization creates a guest master pointer for an empty private scrap, with
+initial length and handle queries. Tests verify repeated initialization, per-run isolation,
+failed writes, uninitialized queries, and guest dereferencing of the empty handle. TextEdit
+records, editing, hooks, scrap resizing, and system clipboard transfer remain pending.
+Dialog initialization records the guest resume pointer and establishes empty parameter
+strings and the system font. SetDialogFont/SetDAFont and ParamText update per-run state.
+ParamText copies all four checked Pascal strings before publishing the new values; import
+faults now distinguish reads from writes. Tests cover valid/invalid guest calls, truncated
+strings, MacRoman bytes, font aliases, and state isolation. Dialog creation, modal handling,
+alert audio, and guest resume callback execution remain pending.
+A fixed 16 MiB guest application zone backs first-fit pointer/handle allocations, logical
+size queries, clearing, disposal, free-memory/error queries, and master-pointer pools in
+64-entry blocks. MaxApplZone uses the already expanded zone. Free ranges coalesce; master
+pointers remain stable. Tests cover exhaustion, zero-size allocations, master-pool growth,
+reuse, invalid block kinds, failed-write rollback, guest pointer/handle access, and signed
+MemError results. Resizing, compaction, purging, locking, callbacks, and system zones remain
+pending. CPU memory permissions cover the whole heap mapping, not allocation lifetimes.
+Gestalt bridges Graphite's selector table with an explicit guest profile: sysv=0x0900,
+sysa=PowerPC, ram/lram=the 16 MiB budget, and qd=original monochrome QuickDraw. The compatibility
+version does not imply complete API coverage. Unknown selectors return -5551 and leave the
+response untouched; known responses use checked big-endian writes. Tests cover guest calls,
+signed errors, invalid destinations, and the absence of host/optional-manager claims.
+Application loading owns both forks, selecting native resource attributes before AppleDouble
+sidecars for raw PEFs and preserving both MacBinary forks. Graphite reads the attached fork
+and STR# lists for GetIndString; ResError exposes errors without confusing them with CPU faults.
+Tests cover each fork source, native precedence, malformed sidecars/lists, absent resources,
+signed resource IDs, indexes, MacRoman bytes, output bounds, guest readback, and MacGzip's
+real fork. Resource chains, file switching, and writes remain pending.
+Pascal/C conversion bridges include p2cstr/P2CStr, c2pstr/C2PStr, the copying variants, and
+CopyPascalStringToC/CopyCStringToPascal. They snapshot source bytes for overlap, retain
+MacRoman bytes, cap C-to-Pascal output at 255 bytes, and report checked read/write faults.
+Tests cover argument order, pointer returns, aliases, overlap, terminators, empty/maximum
+lengths, unmapped or read-only destinations, truncated input, address wraparound, and guest readback.
+BlockMove/BlockMoveData and their uncached variants snapshot checked source ranges before
+writing, preserving overlap semantics. Zero-length calls access no memory; negative Size
+values, wrapped ranges, truncated reads, and rejected destinations produce memory faults.
+Tests cover all four entry points, overlap in both directions, identical/disjoint buffers,
+zero-length calls, range failures, protected code, and guest readback. Interpreter execution
+reads instructions directly, so these bridges require no host instruction-cache operation.
+GetResource/Get1Resource and GetString cache loaded guest-heap handles by resource type/ID.
+ReleaseResource frees the payload and recycles its master pointer; DetachResource keeps
+the allocation alive and removes the resource association. Handle disposal invalidates the
+cache to prevent stale resource identities when master pointers are reused. Tests cover
+signed IDs, stable handles, reload/release/detach, missing/empty resources, GetString,
+payload-write rollback, and guest double dereferencing. Resource attributes, purging,
+multiple resource files, and writeback remain pending.
+Initial StopAlert presentation parses standard ALRT/DITL resources, substitutes parameter
+text without recursive expansion, and renders buttons/static text through Graphite. Supported
+resources use stage word 0x5555 and a null filter. Unsupported layouts/filters remain explicit
+stops. The runner reports alertPending without fabricating a selected item, and the CLI can
+export its monochrome framebuffer as RGB PPM using --framebuffer. Tests cover resource bounds,
+truncation, unsupported stages/items/filters, substitution, pixels, snapshot output, and the
+real MacGzip error message. Modal input, resumption, alert icons/audio, other stages/items,
+and guest filters remain pending.
+AppleEvent handler installation, exact lookup, replacement, and removal use Graphite's
+separate application/system dispatch tables. Guest UPPs remain opaque addresses, and lookup
+writes procedure/refcon values through checked big-endian guest memory. Tests cover table
+isolation, signed errors, invalid outputs, wildcard lookup, and interpreted guest registration.
+Flat AECreateDesc/AEDuplicateDesc/AEDisposeDesc/AEGetDescData/AEGetDescDataSize use checked
+big-endian AEDesc records and guest heap handles. Handle generations reject stale descriptors
+after disposal/reallocation. AECreateAppleEvent and AEGetAttributeDesc/Ptr/AEGetParamDesc/Ptr
+retain structured Graphite values, converting generated scalar attributes to guest byte order.
+Lookup currently supports exact types and typeWildCard, without coercion.
+GetNextEvent, EventAvail, and zero-sleep/null-region WaitNextEvent expose a single host launch
+event. AEProcessAppleEvent accepts the retrieved record, resolves its handler through Graphite,
+and schedules a guest TVector call with borrowed event/reply descriptors and the refcon.
+Completion reclaims those descriptors and propagates the signed OSErr. Nested event delivery
+is rejected explicitly; Toolbox imports inside a handler are supported.
+The interpreter can invoke a checked guest TVector with its TOC, up to eight integer
+arguments, a dedicated 64-byte linkage/argument area, and an instruction budget. Vector
+reads and stack writes require mapped regions; instruction fetch retains executable checks.
+Tests exercise TOC access, argument passing, return values, limits, and rejected ranges.
+AppleEvent callbacks share the outer invocation's remaining budget, including synthetic import
+steps, and preserve the caller's registers. Tests cover interpreted oapp delivery, a Toolbox
+call from the handler, negative OSErr, looping/faulting callbacks, descriptor ownership, endian
+conversion, rollback, missing attributes, and invalid guest reads. Validation used Graphite
+master at 7ab800a. MacGzip still reaches its compatibility alert at 1,513 instructions/19 imports;
+MacZip stops at InitMenus (90 instructions), and BBEdit Lite passes AECreateList and
+NewRoutineDescriptor, FSpOpenDF, PBReadSync, and FindSymbol before stopping at EqualString
+(12,494 instructions, 20 serviced imports), after its fragment initializer populates the application FSSpec.
+AECreateList creates unfactored lists and empty records. AEPutDesc/AEPutPtr, AECountItems,
+AEGetNthDesc, and AEDeleteItem bridge list operations through Graphite with signed one-based
+indices and index-zero append. Updates preserve guest handle identity; retrieved/duplicated
+items have independent value ownership. Descriptor trees are bounded to 32 nested levels,
+4,096 nodes, and 16 MiB of payload per updated tree. Tests cover lifecycle, replacement,
+copy independence, errors, depth limits, and interpreted creation/insertion/counting.
+Factored arrays, keyed record/event mutation, coercion, AESend, general high-level events, sleeping waits, host
+input, and general Mixed Mode calls remain pending. The evnt Gestalt selector stays undefined.
+NewRoutineDescriptor allocates a packed 32-byte version-seven descriptor in the application
+heap, retaining the supplied procedure information and PowerPC TVector. GetCurrentISA returns
+PowerPC; DisposeRoutineDescriptor releases only descriptors created by this runtime, without
+freeing a replacement allocation after descriptor disposal. AppleEvent callbacks resolve raw
+TVectors or single-record absolute/prepared PowerPC UPPs with matching handler procedure
+information. Unsupported descriptor forms stop diagnostically. Tests cover packed bytes,
+allocation/disposal, stale ownership, invalid formats, and interpreted launch callbacks through
+both pointer forms. Relative/unprepared records, multiple routine records, selector dispatch,
+68k execution, NewFatRoutineDescriptor and CallUniversalProc remain pending. The layout follows
+Apple's [Mixed Mode Manager summary](https://leopard-adc.pepas.com/documentation/mac/PPCSoftware/PPCSoftware-39.html).
+The initial File Manager mounts immutable file snapshots in a single root directory: volume
+-100 (or default 0), directory ID 2 (or default 0). The CLI registers the loaded application's
+logical forks using its input basename. Guest FSSpec names are catalog keys, never host paths.
+FSMakeFSSpec, FSpOpenDF/FSpOpenRF, FSRead, FSClose, GetEOF/GetFPos and SetFPos support packed
+guest records, read/current permissions, and independent marks for up to 256 open forks.
+Reads report actual counts and eofErr for partial transfers; output faults leave the mark
+unchanged, and failed reference output closes the newly opened fork. Tests cover packed
+records, independent forks, seek modes, errors, reference reuse, guest endian output, and
+an interpreted PEF that opens, reads and closes a mounted fixture. FileSpec and ForkPosition
+use Graphite's types. Directory/catalog traversal, writes, other parameter-block calls and general
+host filesystem mounting remain pending.
+The interfaces follow Apple's [Introduction to File Management](https://dev.os9.ca/techpubs/mac/pdf/Files/Intro_to_Files.pdf).
+PBReadSync and synchronous PBRead decode packed 50-byte IOParam records, including the
+unaligned ioPosOffset long at byte 46. Positioned reads update the guest buffer, ioActCount,
+ioPosOffset and signed ioResult, matching the OSErr returned in r3. Normal errors clear the
+actual count; partial EOF returns the transferred bytes and eofErr. File marks commit only
+after checked outputs succeed. Synchronous calls ignore ioCompletion; asynchronous calls
+remain explicit unsupported imports, and advanced positioning/read flags return unimpErr.
+Tests cover positioning modes, packed endian output, preserved input fields, partial/zero
+reads, bad references/counts/offsets, output faults, wrapped blocks, and interpreted PB reads.
+The layout follows Apple's [Device Manager summary](https://dev.os9.ca/techpubs/mac/Devices/Devices-52.html).
+Before main, an optional PEF initializer receives a read-only classic CFM InitBlock with
+single-fragment context/closure/connection IDs, a locator, and a Pascal fragment name.
+Disk locators point to the mounted application's packed FSSpec at offset zero of its logical
+data fork; memory locators point to an owned guest copy of the complete PEF container.
+Both entries share memory, Toolbox state and one execution budget, with separate linkage
+frames and TVector TOCs. Diagnostics identify initialization stops; a nonzero signed OSErr
+prevents main. Explicit init also receives the block. Automatic termination and imported
+fragment initialization remain pending. Tests cover both locator kinds, ordering, shared
+heap state, error propagation, and limits spanning init/main. Tracing confirmed BBEdit's
+initializer copies the locator FSSpec into the globals used by its startup data-fork open.
+The block layout follows Apple's [Code Fragment Manager summary](https://dev.os9.ca/techpubs/mac/PPCSoftware/PPCSoftware-66.html).
+FindSymbol and CountSymbols operate on the prepared application's connection ID 1, shared
+with its CFM initialization block. Export metadata owns the original name bytes and resolves
+regular sections, absolute exports and re-exported imports through PEFKit. Section-relative
+exports are checked against instantiated section bounds before execution. FindSymbol writes
+a big-endian address and a one-byte class only on a match; invalid connections return -2801
+and missing exact-byte names return -2802. Tests cover lookup/counting, byte widths, missing
+connections/symbols, memory faults, invalid section offsets, and interpreted lookups for all
+three address forms. GetIndSymbol, library loading and additional connections remain pending.
+The lookup contract follows Apple's [FindSymbol reference](https://dev.os9.ca/techpubs/mac/PPCSoftware/PPCSoftware-58.html).
+The record layout and event interfaces follow Apple's
+[Introduction to Apple Events](https://developer.apple.com/library/archive/documentation/mac/pdf/Interapplication_Communication/Intro_to_Apple_Events.pdf)
+and [Responding to Apple Events](https://dev.os9.ca/techpubs/mac/pdf/Interapplication_Communication/Responding_to_AEs.pdf).
+Unknown libraries, symbols, and other data imports remain explicit failures. Further Toolbox
+dispatch, complete application startup, Linux/ppc32 cross-platform tests, and Embedded
 Swift validation remain outstanding.
 The phases below describe the larger runtime roadmap.
 

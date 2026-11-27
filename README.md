@@ -21,12 +21,94 @@ disabled when its fixture manifest is absent.
 BlueBox maps prepared sections into `GuestAddressSpace`, reads the entry TVector, initializes
 the stack and TOC, and executes through PPC32Core with checked memory and an instruction limit.
 It reports unsupported imports by library and symbol, illegal opcodes, and memory faults.
-MacGzip reaches `InterfaceLib:FlushEvents` after 72 instructions. Toolbox dispatch and full
-application startup remain pending, as do Linux/ppc32 and Embedded Swift validation.
+The initial InterfaceLib dispatcher bridges `TickCount`, `GetDblTime`, `GetCaretTime`,
+`InitCursor`, `HideCursor`, and `ShowCursor` to Graphite and handles `FlushEvents` against
+per-run queue state. Host input delivery and cursor presentation remain pending.
+`InitGraf` initializes packed guest QuickDraw globals, including the `qd` data import, and
+Graphite shares a guest-backed 640×480 monochrome screen. Guest destinations are checked
+before host writes; invalid or read-only pointers produce memory-fault diagnostics.
+`InitFonts` prepares a per-run Graphite font registry with its built-in bitmap fallback.
+`GetSysFont`, `GetAppFont`, `GetDefFontSize`, and `GetFontName` expose the configured defaults
+and write checked MacRoman Pascal strings. Resource fonts and host font discovery remain pending.
+`InitWindows` creates a headless monochrome Window Manager port over the shared screen,
+with packed guest GrafPort and region handles. `GetWMgrPort` returns its guest address and
+`FrontWindow` reports the initial empty window list. Window creation and presentation remain pending.
+`InitMenus` creates headless menu state and draws an empty 20-pixel Roman-script menu bar
+through Graphite. `DrawMenuBar`, `ClearMenuBar`, and `GetMBarHeight` support that initial state;
+resource menus, menu tracking, and menu color resources remain pending.
+`TEInit` creates an empty private-scrap handle in guest memory; `TEScrapHandle`,
+`TEGetScrapHandle`, and `TEGetScrapLength` expose that initial state. TextEdit records,
+editing, hooks, scrap resizing, and system clipboard transfer remain pending.
+`InitDialogs` retains the guest resume pointer and initializes empty substitution strings
+and the default dialog font. `SetDialogFont`/`SetDAFont` and `ParamText` update per-run state;
+Pascal-string reads are range checked and copied. Dialog creation, modal handling, alert
+audio, and guest callback invocation remain pending.
+A bounded 16 MiB application heap supports `MaxApplZone`, `MoreMasters`, pointer/handle
+allocation and clearing, disposal, size queries, `FreeMem`, and `MemError`. Master pointers
+are guest addresses; freed blocks coalesce for reuse. Resizing, compaction, purging, locking,
+grow-zone callbacks, and separate system zones remain pending. CPU access checks cover the
+heap mapping rather than individual allocation lifetimes.
+Gestalt uses an explicit guest profile: a Mac OS 9.0 compatibility version, PowerPC
+architecture, 16 MiB memory budget, and monochrome QuickDraw. It writes checked big-endian
+responses; unimplemented selectors return `gestaltUndefSelectorErr` without touching the
+response. Host capabilities and optional managers are not advertised.
+The CLI attaches application resource forks from native attributes, AppleDouble sidecars,
+or MacBinary archives. `GetIndString` uses Graphite's `STR#` reader and copies a checked
+Pascal string to guest memory; `ResError` reports missing or malformed resource errors.
+Missing resources and out-of-range indexes produce empty strings. Only the application's
+read-only resource fork is connected; file chains and writes remain pending.
+Pascal/C string conversions support in-place and copying variants, their legacy aliases,
+overlapping buffers, and checked guest reads/writes. Conversion preserves bytes and bounds
+C-to-Pascal strings at 255 bytes.
+`BlockMove`, `BlockMoveData`, and their uncached variants copy checked guest ranges with
+overlap-safe snapshots. Zero-length copies do not access either pointer; invalid sizes,
+wrapped ranges, unmapped sources, and protected destinations stop with memory diagnostics.
+`GetResource`, `Get1Resource`, and `GetString` load guest-heap handles with stable identity.
+`ReleaseResource` frees them, and `DetachResource` transfers ownership to the application.
+Resource file switching, attributes, purging, and writeback remain pending.
+Standard first-stage `StopAlert` resources with buttons and static text now render through
+Graphite, including `ParamText` substitution. Execution stops awaiting input without returning
+a fabricated button selection. Guest filters, other item kinds/stages, alert icons, and audio
+remain pending. Use `--framebuffer output.ppm` to save the headless screen.
+MacGzip displays “Sorry, System 7 required” and `gestaltUndefSelectorErr` after 1,513 instructions.
+This is an error-alert path, not a successful launch; the `evnt` Gestalt selector remains undefined.
+`AEInstallEventHandler`, `AEGetEventHandler`, and `AERemoveEventHandler` use Graphite's
+separate application and system handler tables. Flat descriptor creation, duplication, disposal,
+and data access use guest heap handles; event creation and attribute/parameter reads use Graphite.
+`GetNextEvent`, `EventAvail`, and zero-sleep `WaitNextEvent` expose one initial `oapp` event.
+`AEProcessAppleEvent` invokes its guest TVector handler with borrowed event/reply descriptors
+and the installed refcon, sharing the caller's execution budget. A synthetic PEF exercises this
+path and a Toolbox call from inside the handler. Unfactored lists support creation, insertion,
+replacement, counting, copied item lookup, and deletion through Graphite. Empty record creation
+is also supported. Factored arrays, keyed record/parameter mutation, sending, sleeping
+event waits, and host input remain pending; `evnt` stays unadvertised.
+`NewRoutineDescriptor`, `DisposeRoutineDescriptor`, and `GetCurrentISA` support prepared
+PowerPC callbacks. Callback invocation decodes version-seven, single-record descriptors as
+well as raw TVectors. Other architectures, relative/unprepared records, selector dispatch,
+and `CallUniversalProc` remain pending.
+The initial File Manager exposes a read-only volume (-100), with explicitly mounted files in
+its root directory (ID 2). The CLI mounts the loaded application's logical data/resource forks
+under its input basename. `FSMakeFSSpec`, `FSpOpenDF`/`FSpOpenRF`, `FSRead`, `FSClose`,
+`GetEOF`, `GetFPos`, and `SetFPos` support checked guest records and independent open-file marks.
+Writes, directory traversal, and a general host filesystem catalog remain pending.
+Fragments with an initializer now receive a CFM initialization block before `main`, sharing
+guest memory, Toolbox state, and the execution budget. The block identifies the mounted
+application file, or an owned in-memory PEF container for memory-loaded fragments.
+Initialization errors or execution stops prevent `main` from running. This initializes
+BBEdit Lite's application `FSSpec`. Synchronous `PBReadSync` and `PBRead(..., false)` now
+support packed `IOParam` records, positioning, actual counts, and partial EOF results.
+`FindSymbol` and `CountSymbols` expose the prepared application's exports through connection
+ID 1, with relocated section, absolute, and re-exported addresses. Lookup uses exact name
+bytes and checked guest outputs; missing connections and symbols return CFM errors.
+BBEdit now opens and reads its data fork, passes symbol lookup, and reaches `EqualString`
+at 12,494 instructions. Dynamic library loading and symbol enumeration remain pending.
+Asynchronous I/O, completion callbacks, read-mode flags, and other parameter-block calls remain pending.
+Further Toolbox dispatch and full application startup remain pending, as do Linux/ppc32
+and Embedded Swift validation.
 
 Run a raw PEF or MacBinary with `bluebox --max-instructions 100000 /path/to/ClassicApp`.
-Use `--entry init` or `--entry term` to select those entry vectors explicitly; initialization
-and termination are not yet orchestrated automatically. Exit codes are 0 for a guest return,
+Use `--entry init` or `--entry term` to select those entry vectors explicitly; termination
+is not yet orchestrated automatically. Exit codes are 0 for a guest return,
 124 for the instruction limit, 1 for an execution stop, and 2 for a loading or argument error.
 The Graphite and device integrations below describe the intended architecture.
 

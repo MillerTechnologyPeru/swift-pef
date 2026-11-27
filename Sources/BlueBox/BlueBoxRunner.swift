@@ -1,5 +1,6 @@
 import PEFKit
 import PPC32Core
+import Graphite
 
 enum BlueBoxEntry: String {
     case main
@@ -20,16 +21,28 @@ struct BlueBoxRunReport {
     let initialStackPointer: UInt32
     let sectionCount: Int
     let imports: [GuestImport]
+    let handledImportCount: UInt64
+    let pendingAlert: GuestAlert?
+    let framebufferPPM: [UInt8]?
+    let executionEntry: BlueBoxEntry
 
     var diagnostic: String {
-        let context = "pc=\(hex(execution.pc)), lr=\(hex(execution.lr)), instructions=\(execution.instructions)"
+        let phase = executionEntry == .initialize ? "init, " : ""
+        let context = "\(phase)pc=\(hex(execution.pc)), lr=\(hex(execution.lr)), instructions=\(execution.instructions)"
         switch execution.stop {
+        case .alertPending:
+            let text = pendingAlert?.items.filter { !$0.isButton }.map(\.text).joined(separator: " | ") ?? ""
+            return "StopAlert #\(pendingAlert?.id ?? 0) awaiting input: \(text) (\(context))"
         case .returned:
             return "returned r3=\(execution.r3), f1=\(execution.f1) (\(context))"
+        case .initializationFailed(let error):
+            return "fragment initialization failed with OSErr \(error) (\(context))"
         case .instructionLimit:
             return "instruction limit reached (\(context))"
         case .unsupportedImport(let index):
             return "unsupported import \(importName(index)) (\(context))"
+        case .unsupportedRoutineDescriptor(let address):
+            return "unsupported Mixed Mode routine descriptor at \(hex(address)) (\(context))"
         case .illegalInstruction(let opcode):
             return "unsupported/illegal instruction \(hex(opcode)) (\(context))"
         case .invalidInstructionAddress:
@@ -57,10 +70,17 @@ func hex(_ value: UInt32) -> String {
 }
 
 enum BlueBoxRunner {
-    /// Executes one selected PEF entry. Init/term sequencing and host Toolbox shims are separate.
+    /// Prepares one application fragment, initializing it before main in the same guest context.
     static func run(
-        bytes: UnsafeRawBufferPointer, entry: BlueBoxEntry = .main, maxInstructions: Int = 100_000
+        bytes: UnsafeRawBufferPointer, resourceFork: [UInt8]? = nil,
+        captureFramebuffer: Bool = false,
+        files: [GuestFile] = [],
+        applicationFile: GuestFile? = nil,
+        entry: BlueBoxEntry = .main, maxInstructions: Int = 100_000
     ) throws -> BlueBoxRunReport {
+        #if arch(powerpc)
+        throw BlueBoxError.nativeExecutionUnavailable
+        #else
         let container = try PEFContainer(bytes: bytes)
         guard let loader = try container.loaderSection() else { throw BlueBoxError.missingEntry(entry.rawValue) }
         let memory = try GuestAddressSpace()
@@ -97,6 +117,9 @@ enum BlueBoxRunner {
             regions.append(PPC32MemoryRegion(address: vectorBase, byteCount: UInt32(vectorLength), writable: false))
         }
         let vectorPointer = memory.hostPointer(for: vectorBase)
+        try memory.commit(at: GuestQuickDrawGlobals.address, byteCount: Int(GuestQuickDrawGlobals.byteCount))
+        regions.append(PPC32MemoryRegion(address: GuestQuickDrawGlobals.address,
+                                        byteCount: GuestQuickDrawGlobals.byteCount, writable: true))
         var importedAddresses = [UInt32](repeating: 0, count: importCount)
         var imports: [GuestImport] = []
         var libraryNames: [UInt32: String] = [:]
@@ -115,6 +138,10 @@ enum BlueBoxRunner {
                     imports.append(GuestImport(library: libraryNames[library] ?? "?",
                                                symbol: String(decoding: name, as: UTF8.self),
                                                symbolClass: symbolClass))
+                    if libraryNames[library] == "InterfaceLib", symbolClass == .data,
+                       String(decoding: name, as: UTF8.self) == "qd" {
+                        return GuestQuickDrawGlobals.address
+                    }
                     let trap = PPC32State.importTrapBase + index * 4
                     if symbolClass == .tVector {
                         vectorPointer.storeBytes(of: trap.bigEndian, toByteOffset: Int(index) * 8, as: UInt32.self)
@@ -146,6 +173,34 @@ enum BlueBoxRunner {
         }
         let code = memory.readBigEndian(UInt32.self, at: selected)
         let toc = memory.readBigEndian(UInt32.self, at: selected + 4)
+        let initializer = entry == .main ? entries.initialize : nil
+        if let initializer {
+            guard initializer & 3 == 0, regions.contains(where: { $0.contains(initializer, byteCount: 8) }) else {
+                throw BlueBoxError.invalidEntryVector(initializer)
+            }
+        }
+        let needsContext = initializer != nil || entry == .initialize
+        if needsContext {
+            guard bytes.count <= Int(0x30000000 - GuestFragmentContext.containerAddress) else {
+                throw BlueBoxError.guestLayoutTooLarge
+            }
+            let context = GuestFragmentContext.bytes(containerLength: bytes.count, application: applicationFile)
+            try memory.commit(at: GuestFragmentContext.address, byteCount: context.count)
+            context.withUnsafeBytes { source in
+                if let pointer = source.baseAddress {
+                    memory.hostPointer(for: GuestFragmentContext.address).copyMemory(from: pointer, byteCount: source.count)
+                }
+            }
+            regions.append(PPC32MemoryRegion(address: GuestFragmentContext.address, byteCount: UInt32(context.count), writable: false))
+            if applicationFile == nil {
+                try memory.commit(at: GuestFragmentContext.containerAddress, byteCount: bytes.count)
+                if let pointer = bytes.baseAddress {
+                    memory.hostPointer(for: GuestFragmentContext.containerAddress).copyMemory(from: pointer, byteCount: bytes.count)
+                }
+                regions.append(PPC32MemoryRegion(address: GuestFragmentContext.containerAddress,
+                                                byteCount: UInt32(bytes.count), writable: false))
+            }
+        }
         let stackBase: UInt32 = 0x7000_0000
         let stackLength: UInt32 = 1024 * 1024
         try memory.commit(at: stackBase, byteCount: Int(stackLength))
@@ -155,15 +210,111 @@ enum BlueBoxRunner {
         memory.writeBigEndian(UInt32(0), at: stackPointer)
         memory.writeBigEndian(PPC32State.returnSentinel, at: stackPointer + 8)
         memory.writeBigEndian(toc, at: stackPointer + 20)
-        let execution = regions.withUnsafeBufferPointer { regions in
-            EmulatedPPCBackend.call(
-                codeAddress: code, toc: toc, stackPointer: stackPointer,
-                in: memory, maxInstructions: maxInstructions, memoryRegions: regions,
-                dispatchImport: { _, _ in false }
-            )
+        try memory.commit(at: GuestQuickDrawGlobals.screenAddress, byteCount: GuestQuickDrawGlobals.screenByteCount)
+        regions.append(PPC32MemoryRegion(address: GuestQuickDrawGlobals.screenAddress,
+                                        byteCount: UInt32(GuestQuickDrawGlobals.screenByteCount), writable: true))
+        try memory.commit(at: GuestWindowManager.address, byteCount: Int(GuestWindowManager.byteCount))
+        regions.append(PPC32MemoryRegion(address: GuestWindowManager.address,
+                                        byteCount: GuestWindowManager.byteCount, writable: true))
+        try memory.commit(at: GuestTextEdit.scrapHandle, byteCount: Int(GuestTextEdit.byteCount))
+        regions.append(PPC32MemoryRegion(address: GuestTextEdit.scrapHandle,
+                                        byteCount: GuestTextEdit.byteCount, writable: true))
+        try memory.commit(at: GuestHeap.address, byteCount: Int(GuestHeap.byteCount))
+        regions.append(PPC32MemoryRegion(address: GuestHeap.address, byteCount: GuestHeap.byteCount, writable: true))
+        let resources = try resourceFork.map { try ResourceFile(bytes: $0) }
+        let fragmentSymbols = try allocations.withUnsafeBufferPointer { sections in
+            try importedAddresses.withUnsafeBufferPointer { imports in
+                try GuestFragmentSymbols(loader: loader, sections: sections, imports: imports)
+            }
         }
+        var toolbox = ToolboxRuntime(screenPixels: memory.hostPointer(for: GuestQuickDrawGlobals.screenAddress),
+                                     resources: resources, files: files + (applicationFile.map { [$0] } ?? []),
+                                     fragmentSymbols: fragmentSymbols)
+        var executionEntry = entry
+        var execution = regions.withUnsafeBufferPointer { regions in
+            let budget = GuestInstructionBudget(maxInstructions)
+            func invoke(code: UInt32, toc: UInt32, initializing: Bool, elapsed: UInt64) -> PPCExecutionReport {
+                // Each host entry gets a fresh linkage frame, with shared guest memory and Toolbox state.
+                memory.hostPointer(for: stackPointer).initializeMemory(as: UInt8.self, repeating: 0, count: 64)
+                memory.writeBigEndian(PPC32State.returnSentinel, at: stackPointer + 8)
+                memory.writeBigEndian(toc, at: stackPointer + 20)
+                return EmulatedPPCBackend.call(
+                    codeAddress: code, toc: toc, stackPointer: stackPointer,
+                    in: memory, maxInstructions: maxInstructions, memoryRegions: regions,
+                    budget: budget,
+                    configure: { state in
+                        state.timeBase = elapsed
+                        if initializing { state.gpr[3] = GuestFragmentContext.address }
+                    },
+                    takeCallback: { toolbox.takeAppleEventCallback() },
+                    completeCallback: {
+                        toolbox.completeAppleEventCallback(read: { address, count in
+                            guard count >= 0, regions.contains(where: { $0.contains(address, byteCount: count) }) else { return nil }
+                            return Array(UnsafeRawBufferPointer(start: memory.hostPointer(for: address), count: count))
+                        }, write: { address, bytes in
+                            guard regions.contains(where: { $0.writable && $0.contains(address, byteCount: bytes.count) }) else { return false }
+                            bytes.withUnsafeBytes { source in
+                                if let pointer = source.baseAddress { memory.hostPointer(for: address).copyMemory(from: pointer, byteCount: source.count) }
+                            }
+                            return true
+                        })
+                    },
+                    dispatchImport: { index, frame in
+                        guard Int(index) < imports.count else { return false }
+                        return toolbox.dispatch(imports[Int(index)], frame: &frame, readGuest: { address, count in
+                            guard count >= 0,
+                                  regions.contains(where: { $0.contains(address, byteCount: count) }) else { return nil }
+                            let bytes = UnsafeRawBufferPointer(start: memory.hostPointer(for: address), count: count)
+                            return Array(bytes)
+                        }, writeGuest: { address, bytes in
+                            guard regions.contains(where: { $0.writable && $0.contains(address, byteCount: bytes.count) }) else {
+                                return false
+                            }
+                            bytes.withUnsafeBytes { source in
+                                if let pointer = source.baseAddress {
+                                    memory.hostPointer(for: address).copyMemory(from: pointer, byteCount: source.count)
+                                }
+                            }
+                            return true
+                        })
+                    }
+                )
+            }
+            var elapsed: UInt64 = 0
+            if let initializer {
+                executionEntry = .initialize
+                var initialized = invoke(code: memory.readBigEndian(UInt32.self, at: initializer),
+                                         toc: memory.readBigEndian(UInt32.self, at: initializer + 4),
+                                         initializing: true, elapsed: 0)
+                guard initialized.stop == .returned else { return initialized }
+                let error = Int16(truncatingIfNeeded: initialized.r3)
+                guard error == 0 else {
+                    initialized.stop = .initializationFailed(error)
+                    return initialized
+                }
+                elapsed = initialized.instructions
+            }
+            executionEntry = entry
+            var result = invoke(code: code, toc: toc, initializing: entry == .initialize, elapsed: elapsed)
+            if entry == .initialize, result.stop == .returned {
+                let error = Int16(truncatingIfNeeded: result.r3)
+                if error != 0 { result.stop = .initializationFailed(error) }
+            }
+            return result
+        }
+        if let fault = toolbox.guestMemoryFault {
+            execution.stop = .memoryFault(address: fault.address, write: fault.write)
+        } else if toolbox.pendingAlert != nil {
+            execution.stop = .alertPending
+        }
+        let snapshot = captureFramebuffer ? GuestFramebuffer.ppm(UnsafeRawBufferPointer(
+            start: memory.hostPointer(for: GuestQuickDrawGlobals.screenAddress),
+            count: GuestQuickDrawGlobals.screenByteCount)) : nil
         return BlueBoxRunReport(execution: execution, codeAddress: code, toc: toc,
                                 initialStackPointer: stackPointer,
-                                sectionCount: allocations.count, imports: imports)
+                                sectionCount: allocations.count, imports: imports,
+                                handledImportCount: toolbox.handledImportCount,
+                                pendingAlert: toolbox.pendingAlert, framebufferPPM: snapshot, executionEntry: executionEntry)
+        #endif
     }
 }

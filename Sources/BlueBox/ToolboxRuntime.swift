@@ -32,6 +32,7 @@ struct ToolboxRuntime {
     private(set) var pendingAlert: GuestAlert?
     let appleEventHandlers = GuestAppleEventHandlers()
     private var routineDescriptors: Set<UInt32> = []
+    private var fileManager: GuestFileManager
     private var appleEventDescriptors = GuestAppleEventDescriptors()
     private var launchEventAvailable = true
     private var deliveredAppleEventRecord: [UInt8]?
@@ -46,9 +47,11 @@ struct ToolboxRuntime {
     /// Supplied screen memory must outlive this runtime and its QuickDraw objects.
     init(screenPixels: UnsafeMutableRawPointer? = nil,
          resources: ResourceFile? = nil,
+         files: [GuestFile] = [],
          ticks: @escaping () -> UInt32 = { SystemClock.ticks }) {
         self.ticks = ticks
         self.resources = resources
+        fileManager = GuestFileManager(files: files)
         let bounds = GuestQuickDrawGlobals.screenBounds
         let pixels = screenPixels.map {
             PixelBuffer(wrapping: $0, rowBytes: GuestQuickDrawGlobals.screenRowBytes,
@@ -66,6 +69,16 @@ struct ToolboxRuntime {
             return false
         }
         switch symbol.symbol {
+        case "FSpOpenDF", "FSpOpenRF", "FSClose", "FSRead", "GetEOF", "GetFPos", "SetFPos", "FSMakeFSSpec":
+            guard let readGuest, let writeGuest else { return false }
+            do {
+                try dispatchFileManager(symbol.symbol, frame: &frame, read: readGuest, write: writeGuest)
+            } catch let fault as ToolboxMemoryFault {
+                guestMemoryFault = fault
+                return false
+            } catch let error as MacError {
+                frame.returnGPR = UInt32(bitPattern: error.code)
+            } catch { return false }
         case "GetCurrentISA":
             frame.returnGPR = 1
         case "NewRoutineDescriptor":
@@ -632,6 +645,47 @@ extension ToolboxRuntime {
             pendingAppleEventCallback = GuestPPCInvocation(vector: UInt32(handler.procedure),
                 arguments: [records, records + 8, UInt32(handler.referenceConstant)],
                 procInfo: GuestRoutineDescriptor.appleEventHandlerProcInfo)
+        default: throw MacError.unimplemented
+        }
+    }
+}
+
+// MARK: Read-only File Manager
+extension ToolboxRuntime {
+    private mutating func dispatchFileManager(_ name: String, frame: inout MORAInvocationFrame,
+        read: (UInt32, Int) -> [UInt8]?, write: (UInt32, [UInt8]) -> Bool) throws {
+        typealias Coding = GuestAppleEventDescriptors
+        let a = withUnsafeBytes(of: frame.gpr) { Array($0.bindMemory(to: UInt32.self)) }
+        let reference = Int16(truncatingIfNeeded: a[0])
+        frame.returnGPR = 0
+        switch name {
+        case "FSpOpenDF", "FSpOpenRF":
+            let spec = try GuestFileManager.spec(Coding.read(a[0], count: 70, using: read))
+            let reference = try fileManager.open(spec, permission: Int8(truncatingIfNeeded: a[1]), resource: name == "FSpOpenRF")
+            let bits = UInt16(bitPattern: reference)
+            do { try Coding.write(a[2], bytes: [UInt8(bits >> 8), UInt8(truncatingIfNeeded: bits)], using: write) }
+            catch { try? fileManager.close(reference); throw error }
+        case "FSClose": try fileManager.close(reference)
+        case "GetEOF", "GetFPos":
+            let value = try name == "GetEOF" ? fileManager.size(reference) : fileManager.position(reference)
+            try Coding.write(a[1], bytes: Coding.word(value), using: write)
+        case "SetFPos":
+            try fileManager.seek(reference, mode: UInt16(truncatingIfNeeded: a[1]), offset: Int32(bitPattern: a[2]))
+        case "FSRead":
+            let count = Int32(bitPattern: Coding.word(try Coding.read(a[1], count: 4, using: read)))
+            let eof = try fileManager.read(reference, count: count, output: { bytes in
+                if !bytes.isEmpty { try Coding.write(a[2], bytes: bytes, using: write) }
+                try Coding.write(a[1], bytes: Coding.word(UInt32(bytes.count)), using: write)
+            })
+            if eof { frame.returnGPR = UInt32(bitPattern: MacError.endOfFile.code) }
+        case "FSMakeFSSpec":
+            let length = try Coding.read(a[2], count: 1, using: read)[0]
+            guard length <= 63 else { throw MacError.badName }
+            let bytes = try Coding.read(a[2], count: Int(length) + 1, using: read)
+            let spec = FileSpec(volume: reference == 0 ? GuestFileManager.volume : reference,
+                                parent: DirectoryID(a[1] == 0 ? 2 : a[1]), name: PascalString(bytes: Array(bytes.dropFirst())))
+            try Coding.write(a[3], bytes: GuestFileManager.bytes(spec), using: write)
+            try fileManager.validate(spec)
         default: throw MacError.unimplemented
         }
     }

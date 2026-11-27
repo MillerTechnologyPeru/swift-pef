@@ -14,6 +14,12 @@ public enum PEFError: Error, Sendable {
     case relocationOutOfBounds(offset: Int)
     case unresolvedSymbol(hash: UInt32)
     case malformedLoaderSection
+    case invalidRelocation(UInt16)
+    case relocationLimitExceeded
+    case malformedResourceFork
+    case malformedArchive
+    case invalidSectionLayout
+    case resourceIOFailed(Int32)
 }
 
 public enum PEFSectionKind: UInt8, Sendable {

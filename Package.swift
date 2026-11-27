@@ -1,9 +1,10 @@
 // swift-tools-version: 6.4
 import PackageDescription
 
-// PEFKit is not built with Embedded Swift for now. It stays Foundation-free (it imports only
-// BinaryParsing and the standard library) so Embedded can be re-enabled on it later by adding
-// `.enableExperimentalFeature("Embedded")` and depending on `BinaryParsingEmbedded`.
+// PEFKit includes fragment preparation, format parsers, relocation, and resource-fork readers.
+// BlueBox maps prepared sections into its emulated guest address space and runs bounded calls.
+// PEFKit is Foundation-free. CResourceIO isolates platform xattr calls from the format parsers.
+// Embedded Swift is not enabled or validated yet; it also needs BinaryParsingEmbedded.
 
 let package = Package(
     name: "swift-pef",
@@ -39,8 +40,13 @@ let package = Package(
             ]
         ),
         .target(
+            name: "CResourceIO",
+            publicHeadersPath: "include"
+        ),
+        .target(
             name: "PEFKit",
             dependencies: [
+                "CResourceIO",
                 .product(name: "BinaryParsing", package: "swift-binary-parsing")
             ]
         ),
@@ -52,6 +58,7 @@ let package = Package(
             name: "BlueBox",
             dependencies: [
                 "PEFKit",
+                "PPC32Core",
                 "CMORA",
                 "CMusashi",
                 .product(name: "Graphite", package: "Graphite")

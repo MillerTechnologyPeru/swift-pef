@@ -11,12 +11,33 @@ public enum PPC32StepResult: UInt8, Sendable {
     case illegalInstruction
 }
 
+/// A caller-owned guest memory range used by the optional checked-memory interface.
+public struct PPC32MemoryRegion {
+    public let address: UInt32
+    public let byteCount: UInt32
+    public let writable: Bool
+    public let executable: Bool
+
+    public init(address: UInt32, byteCount: UInt32, writable: Bool, executable: Bool = false) {
+        self.address = address
+        self.byteCount = byteCount
+        self.writable = writable
+        self.executable = executable
+    }
+
+    public func contains(_ address: UInt32, byteCount: Int) -> Bool {
+        guard byteCount >= 0 else { return false }
+        return UInt64(address) >= UInt64(self.address)
+            && UInt64(address) + UInt64(byteCount) <= UInt64(self.address) + UInt64(self.byteCount)
+    }
+}
+
 /// User-mode (problem state) PowerPC 32-bit register file and memory interface.
 ///
 /// Guest memory is a flat big-endian 32-bit address space. On 64-bit little-endian hosts a
 /// guest address `a` maps to `memoryBase + a`; on `ppc32` hosts it is the identity mapping
-/// and `memoryBase` is ignored. Guest accesses are not bounds-checked: the caller is expected
-/// to back the whole window it hands in (or reserve the full 4 GB range).
+/// and `memoryBase` is ignored. With no memoryRegions, accesses are unchecked and the caller
+/// must back the window. Checked execution supplies regions plus a scoped memoryFault pointer.
 public struct PPC32State: ~Copyable {
     /// Guest addresses at or above this value are synthetic CFM import trap vectors.
     public static let importTrapBase: UInt32 = 0xF000_0000
@@ -42,6 +63,11 @@ public struct PPC32State: ~Copyable {
     var reservedAddress: UInt32
 
     public let memoryBase: UnsafeMutableRawPointer
+    /// Optional checked-memory mode. Both buffers must outlive this state.
+    public var memoryRegions: UnsafeBufferPointer<PPC32MemoryRegion>?
+    /// Initialize to UInt64.max. The first fault stores its address and bit 32 for a write.
+    /// After a fault, stop execution; instruction register side effects are not rolled back.
+    public var memoryFault: UnsafeMutablePointer<UInt64>?
 
     public init(memoryBase: UnsafeMutableRawPointer) {
         gpr = InlineArray(repeating: 0)
@@ -57,6 +83,8 @@ public struct PPC32State: ~Copyable {
         hasReservation = false
         reservedAddress = 0
         self.memoryBase = memoryBase
+        memoryRegions = nil
+        memoryFault = nil
     }
 
     /// Index of the imported symbol the guest just branched to. Valid after `.cfmImportTrap`.
@@ -79,42 +107,62 @@ public struct PPC32State: ~Copyable {
     }
 
     @inline(__always)
+    private func allows(_ address: UInt32, size: Int, write: Bool = false) -> Bool {
+        guard let memoryRegions else { return true }
+        for region in memoryRegions where (!write || region.writable) && region.contains(address, byteCount: size) {
+            return true
+        }
+        if let memoryFault, memoryFault.pointee == UInt64.max {
+            memoryFault.pointee = UInt64(address) | (write ? UInt64(1) << 32 : 0)
+        }
+        return false
+    }
+
+    @inline(__always)
     public func readUInt8(_ address: UInt32) -> UInt8 {
-        hostPointer(address).load(as: UInt8.self)
+        guard allows(address, size: 1) else { return 0 }
+        return hostPointer(address).load(as: UInt8.self)
     }
 
     @inline(__always)
     public func readUInt16(_ address: UInt32) -> UInt16 {
-        UInt16(bigEndian: hostPointer(address).loadUnaligned(as: UInt16.self))
+        guard allows(address, size: 2) else { return 0 }
+        return UInt16(bigEndian: hostPointer(address).loadUnaligned(as: UInt16.self))
     }
 
     @inline(__always)
     public func readUInt32(_ address: UInt32) -> UInt32 {
-        UInt32(bigEndian: hostPointer(address).loadUnaligned(as: UInt32.self))
+        guard allows(address, size: 4) else { return 0 }
+        return UInt32(bigEndian: hostPointer(address).loadUnaligned(as: UInt32.self))
     }
 
     @inline(__always)
     public func readUInt64(_ address: UInt32) -> UInt64 {
-        UInt64(bigEndian: hostPointer(address).loadUnaligned(as: UInt64.self))
+        guard allows(address, size: 8) else { return 0 }
+        return UInt64(bigEndian: hostPointer(address).loadUnaligned(as: UInt64.self))
     }
 
     @inline(__always)
     public func writeUInt8(_ value: UInt8, at address: UInt32) {
+        guard allows(address, size: 1, write: true) else { return }
         hostPointer(address).storeBytes(of: value, as: UInt8.self)
     }
 
     @inline(__always)
     public func writeUInt16(_ value: UInt16, at address: UInt32) {
+        guard allows(address, size: 2, write: true) else { return }
         hostPointer(address).storeBytes(of: value.bigEndian, as: UInt16.self)
     }
 
     @inline(__always)
     public func writeUInt32(_ value: UInt32, at address: UInt32) {
+        guard allows(address, size: 4, write: true) else { return }
         hostPointer(address).storeBytes(of: value.bigEndian, as: UInt32.self)
     }
 
     @inline(__always)
     public func writeUInt64(_ value: UInt64, at address: UInt32) {
+        guard allows(address, size: 8, write: true) else { return }
         hostPointer(address).storeBytes(of: value.bigEndian, as: UInt64.self)
     }
 

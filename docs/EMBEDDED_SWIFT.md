@@ -2,6 +2,15 @@
 
 `PEFKit` is designed to compile cleanly under **Embedded Swift** (`-enable-experimental-feature Embedded`) on `powerpc-unknown-linux-gnu` (`ppc32` BE), eliminating runtime reflection metadata, existential heap boxes, and ARC overhead.
 
+PEFKit currently builds with standard Swift and BinaryParsing, rather than Embedded Swift.
+The format APIs use typed throws and caller-owned buffers; native xattrs are isolated in
+CResourceIO. Embedded compilation remains a separate validation step.
+
+`PEFContainer`, `PEFLoaderSection`, and `ResourceFork` are noncopyable views, not buffer owners.
+Their unsafe pointers do not enforce the backing storage's lifetime: create and use a view
+inside the source buffer's lifetime, and keep those bytes unchanged. Resource entries and archive
+slices also borrow that storage. Noncopyability alone does not prevent dangling pointers.
+
 ---
 
 ## 1. Noncopyable (`~Copyable`) Ownership Boundaries

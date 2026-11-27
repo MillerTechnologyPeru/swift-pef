@@ -118,7 +118,7 @@ public struct PEFExportedSymbol: Sendable {
     public let rawClass: UInt8
     public let nameOffset: UInt32
     public let symbolOffset: UInt32
-    /// Section index; `-1` is an absolute symbol and `-2` is re-exported.
+    /// Section index; `-2` is an absolute symbol and `-3` is a re-exported import.
     public let sectionIndex: Int16
 
     public var nameLength: Int { Int(hashWord >> 16) }
@@ -183,8 +183,10 @@ public struct PEFLoaderSection: ~Copyable {
         let relocHeadersEnd = importedSymbolsEnd
             + UInt64(info.relocSectionCount) * UInt64(PEFRelocationHeader.byteSize)
         guard relocHeadersEnd <= count,
-              UInt64(info.relocInstrOffset) <= count,
-              UInt64(info.loaderStringsOffset) <= count,
+              UInt64(info.relocInstrOffset) >= relocHeadersEnd,
+              info.relocInstrOffset <= info.loaderStringsOffset,
+              info.loaderStringsOffset <= info.exportHashOffset,
+              UInt64(info.exportHashOffset) <= count,
               info.exportHashTablePower <= 30 else {
             throw .malformedLoaderSection
         }
@@ -195,7 +197,7 @@ public struct PEFLoaderSection: ~Copyable {
         let hashEnd = UInt64(info.exportHashOffset) + slotBytes + keysBytes + symbolsBytes
         guard hashEnd <= count else { throw .malformedLoaderSection }
 
-        return PEFLoaderSection(
+        let view = PEFLoaderSection(
             bytes: bytes,
             info: info,
             importedSymbolsOffset: Int(librariesEnd),
@@ -203,6 +205,42 @@ public struct PEFLoaderSection: ~Copyable {
             exportKeysOffset: Int(info.exportHashOffset) + Int(slotBytes),
             exportSymbolsOffset: Int(info.exportHashOffset) + Int(slotBytes) + Int(keysBytes)
         )
+        for index in 0..<Int(info.importedLibraryCount) {
+            let library = try view.importedLibrary(at: index)
+            guard UInt64(library.firstImportedSymbol) + UInt64(library.importedSymbolCount)
+                    <= UInt64(info.totalImportedSymbolCount),
+                  view.name(atOffset: library.nameOffset) != nil else {
+                throw .malformedLoaderSection
+            }
+        }
+        for index in 0..<Int(info.totalImportedSymbolCount) {
+            let symbol = try view.importedSymbol(at: index)
+            guard symbol.symbolClass != nil, view.name(atOffset: symbol.nameOffset) != nil else {
+                throw .malformedLoaderSection
+            }
+        }
+        for index in 0..<Int(info.relocSectionCount) {
+            _ = try view.relocationInstructions(for: view.relocationHeader(at: index))
+        }
+        for index in 0..<Int(info.exportedSymbolCount) {
+            let symbol = try view.exportedSymbol(at: index)
+            guard symbol.symbolClass != nil, view.name(of: symbol) != nil,
+                  symbol.sectionIndex >= 0 || symbol.sectionIndex == -2 || symbol.sectionIndex == -3 else {
+                throw .malformedLoaderSection
+            }
+            if symbol.sectionIndex == -3, symbol.symbolOffset >= info.totalImportedSymbolCount {
+                throw .malformedLoaderSection
+            }
+        }
+        for slot in 0..<Int(slotBytes / 4) {
+            let word = try view.withSpan(at: Int(info.exportHashOffset) + slot * 4) {
+                (span) throws(PEFError) in try span.readUInt32()
+            }
+            guard UInt64(word & 0x3FFFF) + UInt64(word >> 18) <= UInt64(info.exportedSymbolCount) else {
+                throw .malformedLoaderSection
+            }
+        }
+        return view
     }
 
     /// Runs `body` with a parser span positioned at `offset` within the loader bytes.
@@ -241,7 +279,7 @@ public struct PEFLoaderSection: ~Copyable {
     ) throws(PEFError) -> UnsafeRawBufferPointer {
         let start = UInt64(info.relocInstrOffset) + UInt64(header.firstRelocOffset)
         let size = UInt64(header.relocCount) * 2
-        guard start + size <= UInt64(bytes.count) else {
+        guard header.firstRelocOffset % 2 == 0, start + size <= UInt64(info.loaderStringsOffset) else {
             throw .relocationOutOfBounds(offset: Int(truncatingIfNeeded: start))
         }
         return UnsafeRawBufferPointer(rebasing: bytes[Int(start)..<Int(start + size)])
@@ -263,17 +301,42 @@ public struct PEFLoaderSection: ~Copyable {
     /// NUL-terminated name of an imported library or symbol.
     public func name(atOffset offset: UInt32) -> UnsafeRawBufferPointer? {
         let start = UInt64(info.loaderStringsOffset) + UInt64(offset)
-        guard start < UInt64(bytes.count) else { return nil }
+        let limit = Int(info.exportHashOffset)
+        guard start < UInt64(limit) else { return nil }
         var end = Int(start)
-        while end < bytes.count, bytes[end] != 0 { end += 1 }
+        while end < limit, bytes[end] != 0 { end += 1 }
+        guard end < limit else { return nil }
         return UnsafeRawBufferPointer(rebasing: bytes[Int(start)..<end])
     }
 
     /// Name of an exported symbol; its length comes from the hash word, so no NUL is required.
     public func name(of symbol: PEFExportedSymbol) -> UnsafeRawBufferPointer? {
         let start = UInt64(info.loaderStringsOffset) + UInt64(symbol.nameOffset)
-        guard start + UInt64(symbol.nameLength) <= UInt64(bytes.count) else { return nil }
+        guard start + UInt64(symbol.nameLength) <= UInt64(info.exportHashOffset) else { return nil }
         return UnsafeRawBufferPointer(rebasing: bytes[Int(start)..<(Int(start) + symbol.nameLength)])
+    }
+
+    /// Resolves the PEF export pseudo-sections and regular section-relative addresses.
+    public func address(
+        of symbol: PEFExportedSymbol,
+        sectionAddresses: UnsafeBufferPointer<UInt32>,
+        importedAddresses: UnsafeBufferPointer<UInt32>
+    ) throws(PEFError) -> UInt32 {
+        switch symbol.sectionIndex {
+        case -2:
+            return symbol.symbolOffset
+        case -3:
+            guard UInt64(symbol.symbolOffset) < UInt64(importedAddresses.count) else {
+                throw .malformedLoaderSection
+            }
+            return importedAddresses[Int(symbol.symbolOffset)]
+        case 0...Int16.max:
+            let index = Int(symbol.sectionIndex)
+            guard index < sectionAddresses.count else { throw .malformedLoaderSection }
+            return sectionAddresses[index] &+ symbol.symbolOffset
+        default:
+            throw .malformedLoaderSection
+        }
     }
 
     // MARK: - Export lookup

@@ -22,6 +22,7 @@ import PackageDescription
 // CFM initialization blocks precede main entry execution in the shared guest context.
 // Tested synchronous parameter-block reads preserve packed IOParam fields and checked guest output.
 // Tested CFM symbol lookup exposes the prepared application's relocated export metadata.
+// The interpreted execution backend is excluded when targeting 32-bit PowerPC.
 // PEFKit is Foundation-free. CResourceIO isolates platform xattr calls from the format parsers.
 // Embedded Swift is not enabled or validated yet; it also needs BinaryParsingEmbedded.
 

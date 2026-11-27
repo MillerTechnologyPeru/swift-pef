@@ -10,6 +10,7 @@ import PackageDescription
 // TextEdit initialization owns a guest master pointer for its empty private scrap.
 // Dialog defaults and substitution strings stay per-run, with checked guest reads.
 // The bounded application heap backs tested guest pointer and handle allocations.
+// Gestalt reports an explicit guest profile instead of the host environment.
 // PEFKit is Foundation-free. CResourceIO isolates platform xattr calls from the format parsers.
 // Embedded Swift is not enabled or validated yet; it also needs BinaryParsingEmbedded.
 

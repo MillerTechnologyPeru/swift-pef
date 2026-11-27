@@ -6,6 +6,7 @@ import Darwin
 #endif
 
 enum BlueBoxError: Error {
+    case nativeExecutionUnavailable
     case mmapFailed
     case addressSpaceReservationFailed
     case invalidGuestRange

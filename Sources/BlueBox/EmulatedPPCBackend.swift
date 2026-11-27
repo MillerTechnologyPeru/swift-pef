@@ -2,6 +2,7 @@ import CMORA
 import PPC32Core
 
 enum PPCExecutionStop: Equatable {
+    case alertPending
     case returned
     case instructionLimit
     case unsupportedImport(UInt32)

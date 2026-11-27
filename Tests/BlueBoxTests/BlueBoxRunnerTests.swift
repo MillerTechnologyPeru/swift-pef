@@ -15,24 +15,31 @@ import Testing
     /// Code + data/TOC/TVector + loader, with real section and import relocation records.
     private func executable(_ instructions: [UInt32], imported: Bool = false,
                             importedSymbol: String = "UnknownToolboxCall", importedClass: UInt32 = 2,
+                            secondaryImport: String? = nil,
                             entryOffset: UInt32 = 0) -> [UInt8] {
         let code = instructions.flatMap(be32)
         let dataOffset = (128 + code.count + 15) / 16 * 16
         let loaderOffset = dataOffset + 256
-        let relocations: [UInt16] = imported ? [0x4600, 0x8003, 0x6000] : [0x4600]
-        let strings = imported ? Array("InterfaceLib\0\(importedSymbol)\0".utf8) : []
-        let relocationOffset = imported ? 96 : 68
+        let names = imported ? [importedSymbol] + (secondaryImport.map { [$0] } ?? []) : []
+        let relocations: [UInt16] = imported
+            ? [0x4600, 0x8003, 0x6000] + (secondaryImport == nil ? [] : [0x6001]) : [0x4600]
+        let strings = imported ? Array(("InterfaceLib\0" + names.map { $0 + "\0" }.joined()).utf8) : []
+        let relocationOffset = imported ? 92 + names.count * 4 : 68
         let stringsOffset = relocationOffset + relocations.count * 2
         let hashOffset = (stringsOffset + strings.count + 3) / 4 * 4
         var loader: [UInt8] = []
         for word: UInt32 in [1, 0, 0xFFFFFFFF, 0, 0xFFFFFFFF, 0,
-                              imported ? 1 : 0, imported ? 1 : 0, 1,
+                              imported ? 1 : 0, UInt32(names.count), 1,
                               UInt32(relocationOffset), UInt32(stringsOffset), UInt32(hashOffset), 0, 0] {
             loader += be32(word)
         }
         if imported {
-            loader += be32(0) + be32(0) + be32(0) + be32(1) + be32(0) + [0, 0, 0, 0]
-            loader += be32(importedClass << 24 | 13)
+            loader += be32(0) + be32(0) + be32(0) + be32(UInt32(names.count)) + be32(0) + [0, 0, 0, 0]
+            var nameOffset: UInt32 = 13
+            for name in names {
+                loader += be32(importedClass << 24 | nameOffset)
+                nameOffset += UInt32(name.utf8.count + 1)
+            }
         }
         loader += be16(1) + be16(0) + be32(UInt32(relocations.count)) + be32(0)
         loader += relocations.flatMap(be16) + strings
@@ -186,6 +193,25 @@ import Testing
         #expect(report.handledImportCount == 1)
     }
 
+    @Test func checksGuestParamTextReadsAfterDialogInitialization() throws {
+        for valid in [false, true] {
+            var code: [UInt32] = [0x7FC802A6, 0x3BE20000, 0x38600000,
+                                  0x81820004, 0x800C0000, 0x804C0004, 0x7C0903A6, 0x4E800421,
+                                  0x385F0000]
+            // All four strings point to an empty Pascal string in guest data, or to unmapped null.
+            code += valid ? [0x38620028, 0x38820028, 0x38A20028, 0x38C20028]
+                          : [0x38600000, 0x38800000, 0x38A00000, 0x38C00000]
+            code += [0x81820008, 0x800C0000, 0x804C0004, 0x7C0903A6, 0x4E800421,
+                     0x7FC803A6, 0x4E800020]
+            let report = try executable(code, imported: true, importedSymbol: "InitDialogs",
+                                        secondaryImport: "ParamText").withUnsafeBytes {
+                try BlueBoxRunner.run(bytes: $0)
+            }
+            #expect(report.execution.stop == (valid ? .returned : .memoryFault(address: 0, write: false)))
+            #expect(report.handledImportCount == (valid ? 2 : 1))
+        }
+    }
+
     @Test func initGrafRejectsReadOnlyGuestDestination() throws {
         // Pass thePort=code+126, making InitGraf's first write target the code section.
         let code: [UInt32] = [0x3C600100, 0x3863007E,
@@ -232,8 +258,8 @@ import Testing
             return
         }
         #expect(report.imports[Int(index)].library == "InterfaceLib")
-        #expect(report.imports[Int(index)].symbol == "InitDialogs")
-        #expect(report.handledImportCount == 6)
-        #expect(report.execution.instructions == 123)
+        #expect(report.imports[Int(index)].symbol == "MaxApplZone")
+        #expect(report.handledImportCount == 8)
+        #expect(report.execution.instructions == 139)
     }
 }

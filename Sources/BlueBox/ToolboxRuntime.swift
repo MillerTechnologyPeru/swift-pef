@@ -12,6 +12,7 @@ struct ToolboxRuntime {
     private(set) var fonts: FontRegistry?
     private(set) var windowManagerPort: Port?
     private(set) var menuManager: HeadlessMenuManager?
+    private(set) var textEditScrapLength: UInt32?
 
     /// Low-level event kinds in chronological order; host input delivery is still pending.
     var pendingEventKinds: [UInt16] = []
@@ -36,6 +37,21 @@ struct ToolboxRuntime {
             return false
         }
         switch symbol.symbol {
+        case "TEInit":
+            if textEditScrapLength == nil {
+                guard let writeGuest else { return false }
+                guard writeGuest(GuestTextEdit.scrapHandle, GuestTextEdit.initialBytes) else {
+                    guestMemoryFault = GuestTextEdit.scrapHandle
+                    return false
+                }
+                textEditScrapLength = 0
+            }
+        case "TEScrapHandle", "TEGetScrapHandle":
+            guard textEditScrapLength != nil else { return false }
+            frame.returnGPR = GuestTextEdit.scrapHandle
+        case "TEGetScrapLength":
+            guard let textEditScrapLength else { return false }
+            frame.returnGPR = textEditScrapLength
         case "InitMenus":
             guard windowManagerPort != nil, let screen = quickDraw.mainDevice else { return false }
             if let menuManager {

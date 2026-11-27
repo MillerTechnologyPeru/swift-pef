@@ -66,8 +66,12 @@ wrapped ranges, unmapped sources, and protected destinations stop with memory di
 `GetResource`, `Get1Resource`, and `GetString` load guest-heap handles with stable identity.
 `ReleaseResource` frees them, and `DetachResource` transfers ownership to the application.
 Resource file switching, attributes, purging, and writeback remain pending.
-MacGzip now reaches `InterfaceLib:StopAlert` after 1,513 instructions. This is an error-alert
-path, not a successful launch; the `evnt` Gestalt selector remains undefined.
+Standard first-stage `StopAlert` resources with buttons and static text now render through
+Graphite, including `ParamText` substitution. Execution stops awaiting input without returning
+a fabricated button selection. Guest filters, other item kinds/stages, alert icons, and audio
+remain pending. Use `--framebuffer output.ppm` to save the headless screen.
+MacGzip displays “Sorry, System 7 required” and `gestaltUndefSelectorErr` after 1,513 instructions.
+This is an error-alert path, not a successful launch; the `evnt` Gestalt selector remains undefined.
 Further Toolbox dispatch and full application startup remain pending, as do Linux/ppc32
 and Embedded Swift validation.
 

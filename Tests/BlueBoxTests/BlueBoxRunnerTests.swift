@@ -212,6 +212,36 @@ import Testing
         }
     }
 
+    @Test func guestWritesAllocatedPointerAndDereferencesAllocatedHandle() throws {
+        for handle in [false, true] {
+            var code: [UInt32] = [0x7FC802A6, 0x38600010, 0x81820004, 0x800C0000,
+                                  0x804C0004, 0x7C0903A6, 0x4E800421]
+            if handle { code += [0x80630000] } // Master pointer -> data pointer.
+            code += [0x3880002A, 0x90830000, 0x80630000, 0x7FC803A6, 0x4E800020]
+            let report = try executable(code, imported: true,
+                                        importedSymbol: handle ? "NewHandleClear" : "NewPtrClear").withUnsafeBytes {
+                try BlueBoxRunner.run(bytes: $0)
+            }
+            #expect(report.execution.stop == .returned)
+            #expect(report.execution.r3 == 42)
+            #expect(report.handledImportCount == 1)
+        }
+    }
+
+    @Test func guestReadsMemErrorAfterAllocationFailure() throws {
+        let code: [UInt32] = [0x7FC802A6, 0x3BE20000, 0x3860FFFF,
+                              0x81820004, 0x800C0000, 0x804C0004, 0x7C0903A6, 0x4E800421,
+                              0x385F0000, 0x81820008, 0x800C0000, 0x804C0004, 0x7C0903A6,
+                              0x4E800421, 0x7FC803A6, 0x4E800020]
+        let report = try executable(code, imported: true, importedSymbol: "NewPtr",
+                                    secondaryImport: "MemError").withUnsafeBytes {
+            try BlueBoxRunner.run(bytes: $0)
+        }
+        #expect(report.execution.stop == .returned)
+        #expect(Int32(bitPattern: report.execution.r3) == -108)
+        #expect(report.handledImportCount == 2)
+    }
+
     @Test func initGrafRejectsReadOnlyGuestDestination() throws {
         // Pass thePort=code+126, making InitGraf's first write target the code section.
         let code: [UInt32] = [0x3C600100, 0x3863007E,
@@ -258,8 +288,8 @@ import Testing
             return
         }
         #expect(report.imports[Int(index)].library == "InterfaceLib")
-        #expect(report.imports[Int(index)].symbol == "MaxApplZone")
-        #expect(report.handledImportCount == 8)
-        #expect(report.execution.instructions == 139)
+        #expect(report.imports[Int(index)].symbol == "Gestalt")
+        #expect(report.handledImportCount == 11)
+        #expect(report.execution.instructions == 168)
     }
 }

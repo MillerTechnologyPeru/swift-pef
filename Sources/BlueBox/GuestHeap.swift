@@ -18,6 +18,9 @@ struct GuestHeap {
     private var blocks: [UInt32: Block] = [:]
     private var handles: [UInt32: UInt32] = [:]
     private var masters: [UInt32] = []
+    private var handleGenerations: [UInt32: UInt64] = [:]
+    private var nextHandleGeneration: UInt64 = 0
+    func handleGeneration(_ handle: UInt32) -> UInt64? { handleGenerations[handle] }
     private(set) var lastError: Int16 = 0
     private(set) var memoryFault: ToolboxMemoryFault?
     var freeBytes: UInt32 { free.reduce(0) { $0 + $1.length } }
@@ -72,6 +75,8 @@ struct GuestHeap {
         }
         masters.removeLast()
         handles[handle] = pointer
+        nextHandleGeneration += 1
+        handleGenerations[handle] = nextHandleGeneration
         lastError = 0
         return handle
     }
@@ -103,6 +108,7 @@ struct GuestHeap {
         }
         if pointer != 0 { release(pointer) }
         handles.removeValue(forKey: handle)
+        handleGenerations.removeValue(forKey: handle)
         masters.append(handle)
         lastError = 0
     }

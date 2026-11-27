@@ -6,6 +6,7 @@ import PackageDescription
 // Its tested Toolbox dispatcher bridges supported InterfaceLib imports to per-run Graphite state.
 // QuickDraw globals and the monochrome screen use guest-owned backing memory.
 // The initial Window Manager port also exposes packed guest records and region handles.
+// The headless Menu Manager draws its initial empty bar into the shared screen.
 // PEFKit is Foundation-free. CResourceIO isolates platform xattr calls from the format parsers.
 // Embedded Swift is not enabled or validated yet; it also needs BinaryParsingEmbedded.
 

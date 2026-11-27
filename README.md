@@ -91,14 +91,18 @@ its root directory (ID 2). The CLI mounts the loaded application's logical data/
 under its input basename. `FSMakeFSSpec`, `FSpOpenDF`/`FSpOpenRF`, `FSRead`, `FSClose`,
 `GetEOF`, `GetFPos`, and `SetFPos` support checked guest records and independent open-file marks.
 Writes, directory traversal, and a general host filesystem catalog remain pending.
-BBEdit Lite now calls `FSpOpenDF` after 887 instructions but supplies a null `FSSpec` pointer,
-which stops with a guest memory diagnostic. Its startup context still needs investigation.
+Fragments with an initializer now receive a CFM initialization block before `main`, sharing
+guest memory, Toolbox state, and the execution budget. The block identifies the mounted
+application file, or an owned in-memory PEF container for memory-loaded fragments.
+Initialization errors or execution stops prevent `main` from running. This initializes
+BBEdit Lite's application `FSSpec`; it now opens its data fork and reaches `PBReadSync`
+at 973 instructions. Parameter-block I/O is the next File Manager gap.
 Further Toolbox dispatch and full application startup remain pending, as do Linux/ppc32
 and Embedded Swift validation.
 
 Run a raw PEF or MacBinary with `bluebox --max-instructions 100000 /path/to/ClassicApp`.
-Use `--entry init` or `--entry term` to select those entry vectors explicitly; initialization
-and termination are not yet orchestrated automatically. Exit codes are 0 for a guest return,
+Use `--entry init` or `--entry term` to select those entry vectors explicitly; termination
+is not yet orchestrated automatically. Exit codes are 0 for a guest return,
 124 for the instruction limit, 1 for an execution stop, and 2 for a loading or argument error.
 The Graphite and device integrations below describe the intended architecture.
 

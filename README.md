@@ -21,8 +21,22 @@ disabled when its fixture manifest is absent.
 BlueBox maps prepared sections into `GuestAddressSpace`, reads the entry TVector, initializes
 the stack and TOC, and executes through PPC32Core with checked memory and an instruction limit.
 It reports unsupported imports by library and symbol, illegal opcodes, and memory faults.
-MacGzip reaches `InterfaceLib:FlushEvents` after 72 instructions. Toolbox dispatch and full
-application startup remain pending, as do Linux/ppc32 and Embedded Swift validation.
+The initial InterfaceLib dispatcher bridges `TickCount`, `GetDblTime`, `GetCaretTime`,
+`InitCursor`, `HideCursor`, and `ShowCursor` to Graphite and handles `FlushEvents` against
+per-run queue state. Host input delivery and cursor presentation remain pending.
+`InitGraf` initializes packed guest QuickDraw globals, including the `qd` data import, and
+Graphite shares a guest-backed 640×480 monochrome screen. Guest destinations are checked
+before host writes; invalid or read-only pointers produce memory-fault diagnostics.
+`InitFonts` prepares a per-run Graphite font registry with its built-in bitmap fallback.
+`GetSysFont`, `GetAppFont`, `GetDefFontSize`, and `GetFontName` expose the configured defaults
+and write checked MacRoman Pascal strings. Resource fonts and host font discovery remain pending.
+`InitWindows` creates a headless monochrome Window Manager port over the shared screen,
+with packed guest GrafPort and region handles. `GetWMgrPort` returns its guest address and
+`FrontWindow` reports the initial empty window list. Window creation and presentation remain pending.
+MacGzip now passes `FlushEvents`, `InitGraf`, `InitFonts`, and `InitWindows`, reaching
+`InterfaceLib:InitMenus` after 106 instructions.
+Further Toolbox dispatch and full application startup remain pending, as do Linux/ppc32
+and Embedded Swift validation.
 
 Run a raw PEF or MacBinary with `bluebox --max-instructions 100000 /path/to/ClassicApp`.
 Use `--entry init` or `--entry term` to select those entry vectors explicitly; initialization

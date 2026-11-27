@@ -4,6 +4,7 @@ import PPC32Core
 enum PPCExecutionStop: Equatable {
     case alertPending
     case returned
+    case initializationFailed(Int16)
     case instructionLimit
     case unsupportedImport(UInt32)
     case unsupportedRoutineDescriptor(UInt32)

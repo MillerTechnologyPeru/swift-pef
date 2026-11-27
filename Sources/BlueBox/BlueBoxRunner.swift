@@ -37,6 +37,8 @@ struct BlueBoxRunReport {
             return "instruction limit reached (\(context))"
         case .unsupportedImport(let index):
             return "unsupported import \(importName(index)) (\(context))"
+        case .unsupportedRoutineDescriptor(let address):
+            return "unsupported Mixed Mode routine descriptor at \(hex(address)) (\(context))"
         case .illegalInstruction(let opcode):
             return "unsupported/illegal instruction \(hex(opcode)) (\(context))"
         case .invalidInstructionAddress:

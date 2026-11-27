@@ -163,6 +163,17 @@ import Testing
         #expect(report.handledImportCount == 1)
     }
 
+    @Test func returnsMenuBarHeightThroughImportTVector() throws {
+        let code: [UInt32] = [0x7FC802A6, 0x81820004, 0x800C0000, 0x804C0004,
+                              0x7C0903A6, 0x4E800421, 0x7FC803A6, 0x4E800020]
+        let report = try executable(code, imported: true, importedSymbol: "GetMBarHeight").withUnsafeBytes {
+            try BlueBoxRunner.run(bytes: $0)
+        }
+        #expect(report.execution.stop == .returned)
+        #expect(report.execution.r3 == 20)
+        #expect(report.handledImportCount == 1)
+    }
+
     @Test func initGrafRejectsReadOnlyGuestDestination() throws {
         // Pass thePort=code+126, making InitGraf's first write target the code section.
         let code: [UInt32] = [0x3C600100, 0x3863007E,
@@ -209,8 +220,8 @@ import Testing
             return
         }
         #expect(report.imports[Int(index)].library == "InterfaceLib")
-        #expect(report.imports[Int(index)].symbol == "InitMenus")
-        #expect(report.handledImportCount == 4)
-        #expect(report.execution.instructions == 106)
+        #expect(report.imports[Int(index)].symbol == "TEInit")
+        #expect(report.handledImportCount == 5)
+        #expect(report.execution.instructions == 114)
     }
 }

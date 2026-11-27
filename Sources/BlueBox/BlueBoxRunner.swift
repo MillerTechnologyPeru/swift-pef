@@ -219,8 +219,14 @@ enum BlueBoxRunner {
         try memory.commit(at: GuestHeap.address, byteCount: Int(GuestHeap.byteCount))
         regions.append(PPC32MemoryRegion(address: GuestHeap.address, byteCount: GuestHeap.byteCount, writable: true))
         let resources = try resourceFork.map { try ResourceFile(bytes: $0) }
+        let fragmentSymbols = try allocations.withUnsafeBufferPointer { sections in
+            try importedAddresses.withUnsafeBufferPointer { imports in
+                try GuestFragmentSymbols(loader: loader, sections: sections, imports: imports)
+            }
+        }
         var toolbox = ToolboxRuntime(screenPixels: memory.hostPointer(for: GuestQuickDrawGlobals.screenAddress),
-                                     resources: resources, files: files + (applicationFile.map { [$0] } ?? []))
+                                     resources: resources, files: files + (applicationFile.map { [$0] } ?? []),
+                                     fragmentSymbols: fragmentSymbols)
         var executionEntry = entry
         var execution = regions.withUnsafeBufferPointer { regions in
             let budget = GuestInstructionBudget(maxInstructions)

@@ -60,8 +60,11 @@ read-only resource fork is connected; resource handles, file chains, and writes 
 Pascal/C string conversions support in-place and copying variants, their legacy aliases,
 overlapping buffers, and checked guest reads/writes. Conversion preserves bytes and bounds
 C-to-Pascal strings at 255 bytes.
-MacGzip now converts its first resource string, reaching `InterfaceLib:BlockMoveData`
-after 801 instructions.
+`BlockMove`, `BlockMoveData`, and their uncached variants copy checked guest ranges with
+overlap-safe snapshots. Zero-length copies do not access either pointer; invalid sizes,
+wrapped ranges, unmapped sources, and protected destinations stop with memory diagnostics.
+MacGzip now passes its first block copy, reaching `InterfaceLib:GetResource`
+after 1,426 instructions.
 Further Toolbox dispatch and full application startup remain pending, as do Linux/ppc32
 and Embedded Swift validation.
 

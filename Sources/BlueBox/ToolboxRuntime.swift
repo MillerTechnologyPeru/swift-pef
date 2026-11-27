@@ -31,6 +31,7 @@ struct ToolboxRuntime {
     private var resourceHandles: [GuestResourceKey: UInt32] = [:]
     private(set) var pendingAlert: GuestAlert?
     let appleEventHandlers = GuestAppleEventHandlers()
+    private var routineDescriptors: Set<UInt32> = []
     private var appleEventDescriptors = GuestAppleEventDescriptors()
     private var launchEventAvailable = true
     private var deliveredAppleEventRecord: [UInt8]?
@@ -65,6 +66,26 @@ struct ToolboxRuntime {
             return false
         }
         switch symbol.symbol {
+        case "GetCurrentISA":
+            frame.returnGPR = 1
+        case "NewRoutineDescriptor":
+            guard let writeGuest else { return false }
+            let a = withUnsafeBytes(of: frame.gpr) { Array($0.bindMemory(to: UInt32.self).prefix(3)) }
+            guard UInt8(truncatingIfNeeded: a[2]) == 1 else { return false }
+            if a[0] == 0 { frame.returnGPR = 0; break }
+            let pointer = heap.newPointer(size: Int32(GuestRoutineDescriptor.byteCount), clear: false, write: writeGuest)
+            frame.returnGPR = pointer
+            if pointer != 0 {
+                guard writeGuest(pointer, GuestRoutineDescriptor.bytes(vector: a[0], procInfo: a[1])) else {
+                    heap.disposePointer(pointer)
+                    guestMemoryFault = ToolboxMemoryFault(address: pointer, write: true)
+                    return false
+                }
+                routineDescriptors.insert(pointer)
+            }
+        case "DisposeRoutineDescriptor":
+            let pointer = withUnsafeBytes(of: frame.gpr) { $0.bindMemory(to: UInt32.self)[0] }
+            if routineDescriptors.remove(pointer) != nil { heap.disposePointer(pointer) }
         case "AECreateDesc", "AEDuplicateDesc", "AEDisposeDesc", "AEGetDescData", "AEGetDescDataSize",
              "AECreateList", "AECountItems", "AEPutDesc", "AEPutPtr", "AEGetNthDesc", "AEDeleteItem",
              "AEGetAttributeDesc", "AEGetParamDesc", "AEGetAttributePtr", "AEGetParamPtr", "AECreateAppleEvent", "AEProcessAppleEvent",
@@ -246,7 +267,9 @@ struct ToolboxRuntime {
         case "DisposePtr", "DisposPtr", "DisposeHandle", "DisposHandle", "GetPtrSize", "GetHandleSize":
             let address = withUnsafeBytes(of: frame.gpr) { $0.bindMemory(to: UInt32.self)[0] }
             switch symbol.symbol {
-            case "DisposePtr", "DisposPtr": heap.disposePointer(address)
+            case "DisposePtr", "DisposPtr":
+                heap.disposePointer(address)
+                if heap.lastError == 0 { routineDescriptors.remove(address) }
             case "DisposeHandle", "DisposHandle":
                 guard let writeGuest else { return false }
                 heap.disposeHandle(address, write: writeGuest)
@@ -607,7 +630,8 @@ extension ToolboxRuntime {
             callbackRecords = records
             appleEventCallbackActive = true
             pendingAppleEventCallback = GuestPPCInvocation(vector: UInt32(handler.procedure),
-                arguments: [records, records + 8, UInt32(handler.referenceConstant)])
+                arguments: [records, records + 8, UInt32(handler.referenceConstant)],
+                procInfo: GuestRoutineDescriptor.appleEventHandlerProcInfo)
         default: throw MacError.unimplemented
         }
     }

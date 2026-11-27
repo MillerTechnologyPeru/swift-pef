@@ -2,6 +2,7 @@
 import PackageDescription
 
 // PEFKit includes fragment preparation, format parsers, relocation, and resource-fork readers.
+// BlueBox maps prepared sections into its emulated guest address space and runs bounded calls.
 // PEFKit is Foundation-free. CResourceIO isolates platform xattr calls from the format parsers.
 // Embedded Swift is not enabled or validated yet; it also needs BinaryParsingEmbedded.
 

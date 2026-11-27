@@ -22,10 +22,15 @@ struct BlueBoxRunReport {
     let sectionCount: Int
     let imports: [GuestImport]
     let handledImportCount: UInt64
+    let pendingAlert: GuestAlert?
+    let framebufferPPM: [UInt8]?
 
     var diagnostic: String {
         let context = "pc=\(hex(execution.pc)), lr=\(hex(execution.lr)), instructions=\(execution.instructions)"
         switch execution.stop {
+        case .alertPending:
+            let text = pendingAlert?.items.filter { !$0.isButton }.map(\.text).joined(separator: " | ") ?? ""
+            return "StopAlert #\(pendingAlert?.id ?? 0) awaiting input: \(text) (\(context))"
         case .returned:
             return "returned r3=\(execution.r3), f1=\(execution.f1) (\(context))"
         case .instructionLimit:
@@ -62,6 +67,7 @@ enum BlueBoxRunner {
     /// Executes one selected PEF entry with per-run Toolbox state. Init/term sequencing is separate.
     static func run(
         bytes: UnsafeRawBufferPointer, resourceFork: [UInt8]? = nil,
+        captureFramebuffer: Bool = false,
         entry: BlueBoxEntry = .main, maxInstructions: Int = 100_000
     ) throws -> BlueBoxRunReport {
         let container = try PEFContainer(bytes: bytes)
@@ -206,10 +212,16 @@ enum BlueBoxRunner {
         }
         if let fault = toolbox.guestMemoryFault {
             execution.stop = .memoryFault(address: fault.address, write: fault.write)
+        } else if toolbox.pendingAlert != nil {
+            execution.stop = .alertPending
         }
+        let snapshot = captureFramebuffer ? GuestFramebuffer.ppm(UnsafeRawBufferPointer(
+            start: memory.hostPointer(for: GuestQuickDrawGlobals.screenAddress),
+            count: GuestQuickDrawGlobals.screenByteCount)) : nil
         return BlueBoxRunReport(execution: execution, codeAddress: code, toc: toc,
                                 initialStackPointer: stackPointer,
                                 sectionCount: allocations.count, imports: imports,
-                                handledImportCount: toolbox.handledImportCount)
+                                handledImportCount: toolbox.handledImportCount,
+                                pendingAlert: toolbox.pendingAlert, framebufferPPM: snapshot)
     }
 }
